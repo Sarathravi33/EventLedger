@@ -46,6 +46,13 @@ server:
 account-service:
   base-url: ${ACCOUNT_SERVICE_BASE_URL:http://localhost:8081}
 
-logging:
-  level:
-    com.eventledger: DEBUG
+management:
+  tracing:
+    sampling:
+      # 100% sampling: every request gets a traceId in the logs.
+      # Reduce to 0.1 (10%) in high-traffic production environments.
+      probability: 1.0
+
+# Log levels are configured in logback-spring.xml (com.eventledger at DEBUG,
+# everything else at INFO). logback-spring.xml also sets the JSON format with
+# traceId and spanId included in every line via LogstashEncoder + MDC.

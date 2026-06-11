@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Logback configuration for the Event Gateway.
+
+    Replaces Spring Boot's default plain-text console output with one JSON object
+    per log line. Every line automatically includes traceId and spanId from the
+    MDC, which Micrometer Tracing populates for every inbound HTTP request.
+
+    --- How traceId ends up in the log ---
+    1. A request arrives at the Gateway.
+    2. Micrometer Tracing creates a new span and writes traceId + spanId to the MDC.
+    3. The application logs any message (DEBUG, INFO, etc.).
+    4. LogstashEncoder serialises the log event — it includes all MDC entries as
+       top-level JSON fields, so traceId and spanId appear on every line.
+    5. When AccountServiceClient calls the Account Service, RestTemplate
+       (created via RestTemplateBuilder) adds the W3C traceparent header
+       automatically. The Account Service reads that header and logs the same
+       traceId on its side.
+
+    --- JSON field reference ---
+    @timestamp  ISO-8601 timestamp
+    level       DEBUG / INFO / WARN / ERROR
+    logger_name short class name
+    message     log message
+    traceId     W3C trace ID — same value in Gateway and Account Service logs
+    spanId      current span ID
+    service     spring.application.name (event-gateway)
+    thread_name HTTP worker thread
+    stack_trace present only on exceptions
+-->
+<configuration>
+
+    <!-- Read spring.application.name so every log line is tagged with the service -->
+    <springProperty scope="context" name="appName" source="spring.application.name"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <!--
+            LogstashEncoder writes one JSON object per log line and automatically
+            includes all MDC entries (traceId, spanId) as top-level fields.
+        -->
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <customFields>{"service":"${appName}"}</customFields>
+        </encoder>
+    </appender>
+
+    <!-- Application code at DEBUG; Spring framework and Hibernate stay at INFO -->
+    <logger name="com.eventledger" level="DEBUG"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+</configuration>

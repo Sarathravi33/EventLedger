@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Logback configuration for the Account Service.
+
+    Identical structure to the Event Gateway's logback-spring.xml — every log
+    line is a JSON object with traceId and spanId from the MDC.
+
+    --- How trace propagation works on the Account Service side ---
+    1. The Gateway's RestTemplate (instrumented by Micrometer Tracing via
+       RestTemplateBuilder) adds a W3C traceparent header to every call:
+         traceparent: 00-{traceId}-{spanId}-01
+    2. Micrometer Tracing on the Account Service reads this header on the
+       incoming request and creates a child span under the same traceId.
+    3. The child span's traceId and spanId are written to the MDC.
+    4. Every log statement made while processing that request carries the
+       same traceId that the Gateway used — correlating both log streams.
+
+    --- JSON field reference ---
+    @timestamp  ISO-8601 timestamp
+    level       DEBUG / INFO / WARN / ERROR
+    logger_name short class name
+    message     log message
+    traceId     same W3C trace ID as the originating Gateway request
+    spanId      Account Service child span ID (different from Gateway's spanId)
+    service     spring.application.name (account-service)
+    thread_name HTTP worker thread
+    stack_trace present only on exceptions
+-->
+<configuration>
+
+    <springProperty scope="context" name="appName" source="spring.application.name"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <customFields>{"service":"${appName}"}</customFields>
+        </encoder>
+    </appender>
+
+    <logger name="com.eventledger" level="DEBUG"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+</configuration>

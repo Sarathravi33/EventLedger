@@ -419,18 +419,59 @@ The `existsById` + `save` pattern has a TOCTOU (time-of-check to time-of-use) ra
 
 ## Step 9 — Distributed Tracing
 
-**What:** Every request through the Gateway gets a `traceId`. It is propagated to the Account Service via the W3C `traceparent` header. Both services include the `traceId` in every log line.
+**What:** Every request through the Gateway gets a `traceId`. It is propagated to the Account Service via the W3C `traceparent` header. Both services log every line as a JSON object that includes `traceId` and `spanId`, making it possible to follow a single event across both service log streams.
 
-**Dependencies added:** `micrometer-tracing-bridge-otel`, `opentelemetry-exporter-logging`, `logstash-logback-encoder`
+**Dependencies added (both poms):**
+
+| Dependency | Why |
+|---|---|
+| `io.micrometer:micrometer-tracing-bridge-otel` | Creates spans per request, writes `traceId`/`spanId` to the MDC, propagates W3C `traceparent` on `RestTemplate` calls. Version managed by Spring Boot BOM. |
+| `org.springframework.boot:spring-boot-starter-actuator` | **Required prerequisite** — Spring Boot's tracing auto-configuration (`OpenTelemetryAutoConfiguration`, `TracingProperties`) lives in `spring-boot-actuator-autoconfigure`. Without actuator on the classpath the bridge is present but no `Tracer` bean is created and no MDC population happens. Also enables `/actuator/health` and `/actuator/metrics` used in Step 11. |
+| `net.logstash.logback:logstash-logback-encoder:7.4` | Formats each log event as one JSON object. All MDC entries — including `traceId` and `spanId` — appear automatically as top-level JSON fields. Version `7.4` is compatible with Logback 1.4.x (Spring Boot 3.2.x). |
+
+**Note on `spring-boot-starter-actuator`:** Originally planned for Step 11. Pulled forward here because it is a hard prerequisite for tracing auto-configuration. Step 11 still creates `HealthController` and `MetricsService`, but the dependency is already on the classpath.
+
+**`opentelemetry-exporter-logging` omitted:** The original plan included this OTel span exporter. It was dropped — span export produces a separate log line per completed span (useful for distributed tracing dashboards) but is noise for the development goal of correlating log lines by `traceId`. The MDC-based approach via `logstash-logback-encoder` achieves that goal without the extra dependency.
+
+**No `TracingConfig.java`:** The original plan included this. Everything needed is fully auto-configured:
+- `Tracer` bean — Spring Boot creates it from `micrometer-tracing-bridge-otel` + actuator
+- Sampling rate — set via `management.tracing.sampling.probability: 1.0` in `application.yml`
+- `RestTemplate` instrumentation — applied by `RestTemplateBuilder` (already used in `RestTemplateConfig`)
+- MDC population — done by Micrometer Tracing on every incoming request
 
 **Files created/modified:**
-- `event-gateway/src/main/resources/logback-spring.xml` — JSON log format including `traceId`, `spanId`, `service`, `level`, `timestamp`
-- `account-service/src/main/resources/logback-spring.xml` — same
-- `config/TracingConfig.java` (both services) — configure OTEL exporter, sampler
 
-**How propagation works:** Micrometer Tracing auto-instruments `RestTemplate` beans. When `AccountServiceClient` makes a call, the `traceparent` header is added automatically. Account Service reads it automatically and creates a child span under the same trace.
+*Both services:*
+- `pom.xml` — three new dependencies (above)
+- `src/main/resources/application.yml` — added `management.tracing.sampling.probability: 1.0`; removed `logging.level` block (log levels now owned by `logback-spring.xml`)
+- `src/main/resources/logback-spring.xml` (new) — `LogstashEncoder` appender; `com.eventledger` at DEBUG, root at INFO; `service` custom field from `spring.application.name`
 
-**Testable after this step:** Submit one event, check logs from both services — same `traceId` appears in both log streams.
+**How traceId flows end-to-end:**
+1. `POST /events` arrives at the Gateway
+2. Micrometer Tracing creates a root span; writes `traceId` and `spanId` to the MDC
+3. Every Gateway log statement for this request includes `traceId` via `LogstashEncoder`
+4. `AccountServiceClient` calls Account Service via the instrumented `RestTemplate` — adds header: `traceparent: 00-{traceId}-{spanId}-01`
+5. Account Service receives the header; Micrometer Tracing creates a child span under the same `traceId`; writes to its own MDC
+6. Every Account Service log statement for this request includes the **same** `traceId`
+
+**JSON log line shape:**
+```json
+{
+  "@timestamp": "2026-06-12T10:00:00.000Z",
+  "level": "DEBUG",
+  "logger_name": "c.e.gateway.service.EventService",
+  "message": "Saved event evt-001 with status PENDING",
+  "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "spanId": "00f067aa0ba902b7",
+  "service": "event-gateway",
+  "thread_name": "http-nio-8080-exec-1"
+}
+```
+
+**Testable after this step:**
+- `POST /events` → check Gateway logs for a `traceId` field on every line
+- Check Account Service logs for the **same** `traceId` on the lines logged while handling that request
+- No code change to `AccountServiceClient` — `RestTemplateBuilder` instrumentation handled propagation automatically
 
 ---
 
@@ -467,8 +508,7 @@ The `existsById` + `save` pattern has a TOCTOU (time-of-check to time-of-use) ra
 
 **What:** Health endpoints on both services that actively probe the database. Custom Micrometer metrics: event submission counter and Account Service call timer.
 
-**Dependencies added in this step:**
-- `spring-boot-starter-actuator` added to both `event-gateway/pom.xml` and `account-service/pom.xml` — provides the `/actuator/metrics` endpoint and the Micrometer `MeterRegistry` used by `MetricsService`.
+**Dependencies:** `spring-boot-starter-actuator` was added to both poms in Step 9 (required for tracing auto-configuration). No new dependencies in this step — `MeterRegistry` is provided by the actuator already on the classpath.
 
 **Files created:**
 

@@ -55,6 +55,44 @@
         </dependency>
 
         <!--
+            Micrometer Tracing bridge to the OpenTelemetry SDK.
+            Enables distributed tracing: creates spans per request, populates the
+            MDC with traceId and spanId (read by logback-spring.xml on every log line),
+            and adds the W3C traceparent header to all RestTemplate calls so the
+            Account Service's logs can be correlated with the Gateway's logs by traceId.
+            Version managed by the Spring Boot BOM.
+        -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-otel</artifactId>
+        </dependency>
+
+        <!--
+            Spring Boot Actuator — two purposes:
+            1. Prerequisite: Spring Boot's tracing auto-configuration lives in
+               spring-boot-actuator-autoconfigure. Without this dependency,
+               micrometer-tracing-bridge-otel is on the classpath but no
+               Tracer bean or MDC propagation is set up.
+            2. Enables /actuator/health and /actuator/metrics endpoints (Step 11).
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!--
+            Logstash Logback Encoder: formats each log line as a single JSON object.
+            Automatically includes all MDC fields — traceId and spanId added by
+            Micrometer Tracing appear as top-level fields in every log line.
+            logback-spring.xml wires this encoder into the console appender.
+        -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>7.4</version>
+        </dependency>
+
+        <!--
             Test framework: JUnit 5, Mockito, MockMvc, Spring Boot Test utilities,
             and the embedded H2 database used during test runs.
         -->
