@@ -265,26 +265,58 @@ Returns 201 Created in this step. Step 8 (idempotency) changes the response to 2
 
 ## Step 6 — Account Service Core API
 
-**What:** Account Service built standalone. Can apply transactions, compute balance, and return account details — all independent of the Gateway. Balance computation handles out-of-order naturally because it is a SUM, not a running total that depends on insertion order.
+**What:** Account Service built standalone. Can apply transactions, compute balance, and return account details — all independent of the Gateway. Balance computation handles out-of-order naturally because addition and subtraction are commutative: the result is the same regardless of the order operations are applied.
 
 **Files created:**
 
 *Account Service:*
+- `model/dto/ErrorResponse.java` — same shape as Gateway's (`error` + nullable `details`). `details` is always null here (no Bean Validation in this service), so Jackson omits it from all responses.
+- `exception/GlobalExceptionHandler.java` — `@RestControllerAdvice` with three handlers: `NoSuchElementException` → 404, `IllegalArgumentException` → 400, `Exception` → 500.
 - `service/AccountService.java`
-  - `applyTransaction(String accountId, TransactionRequest)` — creates account if new, inserts transaction, returns updated balance
-  - `getBalance(String accountId)` — queries `SUM` of credits and debits
-  - `getAccount(String accountId)` — account details + transaction list ordered by `eventTimestamp`
+  - `applyTransaction(String accountId, TransactionRequest)` — auto-creates account, inserts transaction, updates running balance, returns `TransactionResponse`
+  - `getBalance(String accountId)` — reads running total from `AccountEntity.balance` (O(1))
+  - `getAccount(String accountId)` — account row + full transaction history ordered by `eventTimestamp ASC`
 - `controller/AccountController.java`
-  - `POST /accounts/{accountId}/transactions`
-  - `GET /accounts/{accountId}/balance`
-  - `GET /accounts/{accountId}`
+  - `POST /accounts/{accountId}/transactions` → 201 Created
+  - `GET /accounts/{accountId}/balance` → 200 / 404
+  - `GET /accounts/{accountId}` → 200 / 404
 
-**Why balance is a SUM query and not a running total:** If a DEBIT arrives for `2026-05-01` after a CREDIT for `2026-05-02`, the balance must still be correct. A SUM over all transactions is commutative — insertion order is irrelevant.
+**Key design decisions:**
+
+**Balance as running total, not SUM-on-read:**
+`AccountEntity.balance` is maintained as a running total updated atomically in every `applyTransaction` call:
+- `CREDIT` → `balance += amount`
+- `DEBIT`  → `balance -= amount`
+
+`getBalance` reads this stored value directly — O(1), no aggregation query at read time. This is correct under out-of-order delivery because addition and subtraction are commutative: the final balance is identical regardless of the order transactions arrived. The `sumAmountByAccountIdAndType` repository method exists but is not used in the primary read path — it is available for verification in tests (Step 12).
+
+**`applyTransaction` is `@Transactional`:**
+Unlike `EventService.submitEvent` (which deliberately omits `@Transactional`), `applyTransaction` wraps both the transaction insert and the balance update in a single database transaction. If either save fails, both are rolled back — no partial state is ever committed. There is no downstream HTTP call inside this method, so there is no risk of the transaction being held open across a network boundary.
+
+**Account auto-creation via `orElseGet` + `save()`:**
+`accountRepository.findById(accountId).orElseGet(...)` returns a transient `AccountEntity` if the account does not exist. The final `accountRepository.save(account)` at the end of the method handles both cases: JPA's `merge` inserts the row if the PK is absent from the database, or updates it if present.
+
+**Switch expression for type dispatch:**
+```java
+BigDecimal newBalance = switch (request.type()) {
+    case "CREDIT" -> account.getBalance().add(request.amount());
+    case "DEBIT"  -> account.getBalance().subtract(request.amount());
+    default -> throw new IllegalArgumentException("Unknown transaction type: " + request.type());
+};
+```
+The `default` branch throws `IllegalArgumentException` → `GlobalExceptionHandler` → 400. In practice this path is unreachable because the Gateway validated the type upstream.
+
+**No `@Valid` on `AccountController`:**
+This is an internal API called only by the Gateway. The Gateway's `GlobalExceptionHandler` validated the event before forwarding it to the Account Service. Adding `@Valid` here would require adding `spring-boot-starter-validation` to `account-service/pom.xml` for no real benefit — the defence-in-depth belongs at the system boundary (the Gateway), not on the internal service.
+
+**`ErrorResponse` and `GlobalExceptionHandler` added (not in original plan):**
+The original plan omitted these for Step 6, but without them Spring returns its Whitelabel error format for 404s — useless to the Gateway client. A minimal handler was added alongside the service and controller.
 
 **Testable after this step:**
-- Apply CREDIT then DEBIT → correct balance
-- Apply DEBIT then CREDIT → same correct balance (out-of-order proof)
-- Account auto-created on first transaction
+- `POST /accounts/{id}/transactions` with CREDIT, then DEBIT → `GET /accounts/{id}/balance` shows correct balance
+- Submit DEBIT then CREDIT for same amounts → same balance (out-of-order proof)
+- Account auto-created on first transaction — no setup call needed
+- `GET /accounts/{unknown}` → 404 with `{ "error": "Account not found: ..." }`
 
 ---
 
