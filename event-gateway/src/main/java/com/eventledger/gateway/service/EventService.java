@@ -11,6 +11,7 @@ import com.eventledger.gateway.repository.EventRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -63,13 +64,16 @@ public class EventService {
     private final EventRepository eventRepository;
     private final AccountServiceClient accountServiceClient;
     private final ObjectMapper objectMapper;
+    private final MetricsService metricsService;
 
     public EventService(EventRepository eventRepository,
                         AccountServiceClient accountServiceClient,
-                        ObjectMapper objectMapper) {
+                        ObjectMapper objectMapper,
+                        MetricsService metricsService) {
         this.eventRepository = eventRepository;
         this.accountServiceClient = accountServiceClient;
         this.objectMapper = objectMapper;
+        this.metricsService = metricsService;
     }
 
     // -------------------------------------------------------------------------
@@ -104,6 +108,7 @@ public class EventService {
         if (existing.isPresent()) {
             log.debug("Duplicate eventId {} (status={}) — returning existing event",
                     request.eventId(), existing.get().getStatus());
+            metricsService.recordEventSubmitted(existing.get().getType(), "DUPLICATE");
             return new EventSubmitResult(toResponse(existing.get()), true);
         }
 
@@ -127,6 +132,7 @@ public class EventService {
         eventRepository.save(event);
         log.debug("Saved event {} with status PENDING", event.getEventId());
 
+        Timer.Sample timerSample = metricsService.startAccountServiceCallTimer();
         try {
             accountServiceClient.applyTransaction(
                     event.getAccountId(),
@@ -136,16 +142,20 @@ public class EventService {
                     event.getCurrency(),
                     event.getEventTimestamp()
             );
+            metricsService.recordAccountServiceCall(timerSample, "success");
             event.setStatus(EventStatus.PROCESSED);
             eventRepository.save(event);
+            metricsService.recordEventSubmitted(event.getType(), "PROCESSED");
             log.debug("Event {} processed successfully", event.getEventId());
 
         } catch (AccountServiceUnavailableException e) {
             // Account Service was unreachable or the circuit breaker opened.
             // Save FAILED status so the client can see the event was received
             // but not applied, then propagate so the controller returns 503.
+            metricsService.recordAccountServiceCall(timerSample, "failure");
             event.setStatus(EventStatus.FAILED);
             eventRepository.save(event);
+            metricsService.recordEventSubmitted(event.getType(), "FAILED");
             log.warn("Event {} could not be applied — Account Service unavailable", event.getEventId());
             throw e;
         }

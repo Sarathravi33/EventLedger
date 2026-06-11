@@ -543,15 +543,39 @@ The try/catch blocks in `applyTransaction` were removed. The `@CircuitBreaker` f
 
 **Dependencies:** `spring-boot-starter-actuator` was added to both poms in Step 9 (required for tracing auto-configuration). No new dependencies in this step — `MeterRegistry` is provided by the actuator already on the classpath.
 
-**Files created:**
+**Files created/modified:**
 
 *Both services:*
-- `controller/HealthController.java` — `GET /health`, runs `SELECT 1` against H2, returns `{ "status": "UP|DOWN", "database": "UP|DOWN", "service": "...", "timestamp": "..." }`
+- `model/dto/HealthResponse.java` (new) — record: `String status, String database, String service, Instant timestamp`. Serializes via Jackson — `timestamp` renders as ISO-8601 due to `write-dates-as-timestamps: false`.
+- `controller/HealthController.java` (new) — `GET /health`. Injects `JdbcTemplate` and `@Value("${spring.application.name}")`. Runs `jdbcTemplate.queryForObject("SELECT 1", Integer.class)` to probe H2. Returns 200 if UP, 503 if the probe throws. Catch is intentionally broad (`Exception`) — any DB connectivity failure, not just `DataAccessException`, is a DOWN condition.
+- `src/main/resources/application.yml` — added `management.endpoints.web.exposure.include: "health,metrics,info"` and `management.endpoint.health.show-details: always`
 
-*Event Gateway:*
-- `service/MetricsService.java` — wraps Micrometer `Counter` (events by type/status) and `Timer` (Account Service call duration)
+*Event Gateway only:*
+- `service/MetricsService.java` (new) — wraps two Micrometer instruments:
+  - `Counter "events.submitted"` tagged with `type` (CREDIT/DEBIT) and `status` (PROCESSED/FAILED/DUPLICATE). Built with `Counter.builder(...).register(registry)` on every call — Micrometer de-duplicates registrations with identical name+tags.
+  - `Timer "account.service.call.duration"` tagged with `outcome` (success/failure). `startAccountServiceCallTimer()` returns a `Timer.Sample`; `recordAccountServiceCall(sample, outcome)` stops it. The sample captures wall-clock time including any connect/read timeout duration and circuit breaker fallback overhead.
+- `service/EventService.java` (modified) — `MetricsService` injected as constructor dependency. Three recording sites in `submitEvent`:
+  - Duplicate path: `recordEventSubmitted(type, "DUPLICATE")` before early return
+  - Success path: `recordAccountServiceCall(sample, "success")` + `recordEventSubmitted(type, "PROCESSED")` after status set to PROCESSED
+  - Failure catch: `recordAccountServiceCall(sample, "failure")` + `recordEventSubmitted(type, "FAILED")` before re-throw
 
-**Testable after this step:** `GET /health` on both services returns correct status. Metrics visible at `/actuator/metrics/events.submitted`.
+**Spring Boot 3.2 breaking change — `RestTemplateConfig`:**
+`RestTemplateBuilder.connectTimeout(Duration)` and `.readTimeout(Duration)` were removed in Spring Boot 3.2. The build failed with `cannot find symbol: method connectTimeout(java.time.Duration)`. Fixed by switching to `requestFactory(() -> new SimpleClientHttpRequestFactory())` and calling `factory.setConnectTimeout(Duration)` / `factory.setReadTimeout(Duration)` directly (available on `SimpleClientHttpRequestFactory` since Spring 6.1). The Jackson message converters registered via `RestTemplateBuilder` are not affected — they come from the auto-configured `HttpMessageConverters` bean and are separate from the request factory.
+
+**Metric query examples:**
+- `GET /actuator/metrics/events.submitted` — total counts by type/status tag pair
+- `GET /actuator/metrics/events.submitted?tag=status:FAILED` — FAILED count only
+- `GET /actuator/metrics/account.service.call.duration` — p50/p99/max latency of Account Service calls
+- `GET /actuator/health` — Actuator's built-in health (includes circuit breaker state via `register-health-indicator: true`)
+
+**`GET /health` vs `GET /actuator/health`:**
+Both exist. `/actuator/health` is Spring Boot's built-in and includes circuit breaker state from Resilience4j. `GET /health` is the custom endpoint — it has a DB probe, a fixed JSON contract, and a direct 503 status code when the database is down. The custom endpoint is the one intended for load balancer health checks where a known JSON schema and exact status codes are required.
+
+**Testable after this step:**
+- `GET /health` on both services → 200 with `{"status":"UP","database":"UP","service":"event-gateway","timestamp":"..."}`
+- `GET /actuator/health` → includes `circuitBreakers.accountService` state
+- `POST /events` twice with same `eventId` → `GET /actuator/metrics/events.submitted?tag=status:DUPLICATE` shows count=1
+- `POST /events` with Account Service up → `GET /actuator/metrics/account.service.call.duration?tag=outcome:success` shows latency
 
 ---
 

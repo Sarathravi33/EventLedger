@@ -48,6 +48,13 @@ management:
       # 100% sampling: every request gets a traceId in the logs.
       # Reduce to 0.1 (10%) in high-traffic production environments.
       probability: 1.0
+  endpoints:
+    web:
+      exposure:
+        include: "health,metrics,info"
+  endpoint:
+    health:
+      show-details: always
 
 # Log levels are configured in logback-spring.xml (com.eventledger at DEBUG,
 # everything else at INFO). logback-spring.xml also sets the JSON format with

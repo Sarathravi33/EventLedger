@@ -52,6 +52,15 @@ management:
       # 100% sampling: every request gets a traceId in the logs.
       # Reduce to 0.1 (10%) in high-traffic production environments.
       probability: 1.0
+  endpoints:
+    web:
+      exposure:
+        # Expose health (includes circuit breaker state), metrics, and info.
+        include: "health,metrics,info"
+  endpoint:
+    health:
+      # Show individual component health (database, circuit breaker) in /actuator/health.
+      show-details: always
 
 # Circuit breaker configuration for the Account Service call.
 # resilience4j-spring-boot3 auto-configures a CircuitBreaker instance named
