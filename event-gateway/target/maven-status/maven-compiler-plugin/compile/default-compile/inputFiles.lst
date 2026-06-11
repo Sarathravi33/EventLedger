@@ -1,4 +1,5 @@
 E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\exception\GlobalExceptionHandler.java
+E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\model\dto\EventSubmitResult.java
 E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\client\AccountServiceClient.java
 E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\model\dto\ErrorResponse.java
 E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\EventGatewayApplication.java

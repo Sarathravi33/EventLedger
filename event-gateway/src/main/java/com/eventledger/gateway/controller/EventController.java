@@ -2,6 +2,7 @@ package com.eventledger.gateway.controller;
 
 import com.eventledger.gateway.model.dto.EventRequest;
 import com.eventledger.gateway.model.dto.EventResponse;
+import com.eventledger.gateway.model.dto.EventSubmitResult;
 import com.eventledger.gateway.service.EventService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -54,14 +55,18 @@ public class EventController {
      * If any constraint fails, Spring MVC throws MethodArgumentNotValidException,
      * which GlobalExceptionHandler maps to 400 before this method is entered.
      *
-     * Returns 201 Created for a new event.
-     * Returns 200 OK for a duplicate eventId (Step 8 — not yet implemented here;
-     * duplicate submissions currently cause a primary key conflict).
+     * Returns 201 Created for a new event (first submission of this eventId).
+     * Returns 200 OK for a duplicate eventId — the existing event is returned
+     * unchanged; no Account Service call is made on the duplicate path.
+     *
+     * The response body shape is identical for both status codes — clients that
+     * do not need to distinguish new from duplicate can ignore the status code.
      */
     @PostMapping
     public ResponseEntity<EventResponse> submitEvent(@Valid @RequestBody EventRequest request) {
-        EventResponse response = eventService.submitEvent(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        EventSubmitResult result = eventService.submitEvent(request);
+        HttpStatus status = result.duplicate() ? HttpStatus.OK : HttpStatus.CREATED;
+        return ResponseEntity.status(status).body(result.event());
     }
 
     /**

@@ -40,9 +40,10 @@ import java.util.NoSuchElementException;
  * running total.
  *
  * --- Idempotency ---
- * Not yet implemented in this step. A duplicate transactionId will cause a
- * primary key conflict on the transactions table. Full idempotency (graceful
- * duplicate detection via existsById) is added in Step 8.
+ * applyTransaction performs a PK lookup via existsById before any write. If the
+ * transactionId already exists, the current account balance is returned immediately
+ * without re-applying the delta. This protects against the Gateway retrying a
+ * call that already succeeded (e.g. after a timeout or crash mid-flight).
  *
  * --- Transaction strategy ---
  * applyTransaction is @Transactional so that the transaction row insert and
@@ -74,6 +75,8 @@ public class AccountService {
      * Applies a transaction to the given account and returns the new balance.
      *
      * Flow:
+     *   0. Idempotency check — if transactionId already exists, return the current
+     *      account balance immediately without re-applying the delta.
      *   1. Load existing account OR create a new one with balance = 0.
      *   2. Insert a new TransactionEntity row (idempotency key = transactionId).
      *   3. Compute new balance: CREDIT adds, DEBIT subtracts.
@@ -86,10 +89,23 @@ public class AccountService {
      *
      * @param accountId the account to credit or debit
      * @param request   the transaction details forwarded from the Event Gateway
-     * @return          the transactionId, accountId, new balance, and currency
+     * @return          the transactionId, accountId, current/new balance, and currency
      */
     @Transactional
     public TransactionResponse applyTransaction(String accountId, TransactionRequest request) {
+        // Idempotency: fast PK lookup before any write. Protects against the Gateway
+        // retrying a call after a timeout or crash — the balance must not be applied twice.
+        // Returns the current account balance (which reflects all transactions applied
+        // so far, including this one when it was first processed).
+        if (transactionRepository.existsById(request.transactionId())) {
+            log.debug("Duplicate transactionId {} — returning current balance without re-applying",
+                    request.transactionId());
+            AccountEntity account = accountRepository.findById(accountId)
+                    .orElseThrow(() -> new NoSuchElementException("Account not found: " + accountId));
+            return new TransactionResponse(
+                    request.transactionId(), accountId, account.getBalance(), account.getCurrency());
+        }
+
         Instant now = Instant.now();
 
         // Load the existing account, or create a new one on the fly.
@@ -102,8 +118,8 @@ public class AccountService {
                 });
 
         // Insert the transaction row. transactionId (= eventId from Gateway) is the
-        // primary key. A duplicate transactionId causes a DB constraint violation —
-        // Step 8 adds an existsById check before this point to handle duplicates gracefully.
+        // primary key — the existsById check above is the first line of defence;
+        // the PK constraint is the safety net if two threads race past the check.
         TransactionEntity transaction = new TransactionEntity(
                 request.transactionId(),
                 accountId,

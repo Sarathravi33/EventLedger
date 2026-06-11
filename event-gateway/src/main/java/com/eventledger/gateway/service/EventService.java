@@ -5,6 +5,7 @@ import com.eventledger.gateway.exception.AccountServiceUnavailableException;
 import com.eventledger.gateway.model.EventStatus;
 import com.eventledger.gateway.model.dto.EventRequest;
 import com.eventledger.gateway.model.dto.EventResponse;
+import com.eventledger.gateway.model.dto.EventSubmitResult;
 import com.eventledger.gateway.model.entity.EventEntity;
 import com.eventledger.gateway.repository.EventRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -19,6 +20,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 
 /**
  * Business logic for the Event Gateway's event lifecycle.
@@ -47,9 +49,11 @@ import java.util.NoSuchElementException;
  * the application (write-dates-as-timestamps=false, non_null inclusion, etc.).
  *
  * --- Idempotency ---
- * Not yet implemented in this step. Duplicate eventId submissions will fail with
- * DataIntegrityViolationException (primary key conflict) until Step 8 adds the
- * explicit duplicate check before the insert.
+ * submitEvent performs a PK lookup before any write. If the eventId already
+ * exists, the existing EventEntity is returned immediately with duplicate=true
+ * and no Account Service call is made. The controller maps duplicate=true → 200 OK
+ * and duplicate=false → 201 Created so clients can distinguish first submission
+ * from repeat submission.
  */
 @Service
 public class EventService {
@@ -76,18 +80,33 @@ public class EventService {
      * Persists a new event and forwards it to the Account Service.
      *
      * Flow:
+     *   0. Idempotency check — if eventId already exists, return existing event
+     *      immediately (duplicate=true). No write, no Account Service call.
      *   1. Serialise optional metadata Map → JSON string.
      *   2. Save EventEntity with status PENDING (committed immediately).
-     *   3. Call AccountServiceClient.applyTransaction (stub in this step).
-     *   4a. Success → set status PROCESSED, save, return EventResponse.
+     *   3. Call AccountServiceClient.applyTransaction.
+     *   4a. Success → set status PROCESSED, save, return result (duplicate=false).
      *   4b. Failure → set status FAILED, save, rethrow so GlobalExceptionHandler
      *       maps AccountServiceUnavailableException to 503.
      *
      * The two-save pattern (PENDING then PROCESSED/FAILED) ensures the event is
      * always persisted regardless of whether the Account Service call succeeds,
-     * which is important for auditability and idempotency (Step 8).
+     * which is important for the audit trail and idempotency.
+     *
+     * @return EventSubmitResult carrying the event and a flag the controller uses
+     *         to choose between 201 Created (new) and 200 OK (duplicate)
      */
-    public EventResponse submitEvent(EventRequest request) {
+    public EventSubmitResult submitEvent(EventRequest request) {
+        // Idempotency: fast PK lookup before any write. If the eventId already
+        // exists (any status: PENDING, PROCESSED, or FAILED), return the stored
+        // event without contacting the Account Service again.
+        Optional<EventEntity> existing = eventRepository.findById(request.eventId());
+        if (existing.isPresent()) {
+            log.debug("Duplicate eventId {} (status={}) — returning existing event",
+                    request.eventId(), existing.get().getStatus());
+            return new EventSubmitResult(toResponse(existing.get()), true);
+        }
+
         String metadataJson = serializeMetadata(request.eventId(), request.metadata());
 
         EventEntity event = new EventEntity(
@@ -131,7 +150,7 @@ public class EventService {
             throw e;
         }
 
-        return toResponse(event);
+        return new EventSubmitResult(toResponse(event), false);
     }
 
     // -------------------------------------------------------------------------

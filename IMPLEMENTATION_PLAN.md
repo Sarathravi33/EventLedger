@@ -368,21 +368,52 @@ The property was added in Step 1. `@Value("${account-service.base-url}")` on the
 
 ## Step 8 — Idempotency (both services)
 
-**What:** Two-layer protection against duplicate event submission.
+**What:** Two-layer protection against duplicate event submission. The Gateway catches duplicates before any write; the Account Service catches them before any balance modification. Together they ensure exactly-once semantics even when the network or the Gateway process fails mid-flight.
 
-**Gateway layer:** Before saving, query by `eventId`. If found, return the existing event with HTTP `200` (not `201`). No call to Account Service.
+**Files created/modified:**
+- `model/dto/EventSubmitResult.java` (Gateway, new) — internal wrapper: `record EventSubmitResult(EventResponse event, boolean duplicate)`. Never serialised; only used between service and controller.
+- `service/EventService.java` (Gateway) — `submitEvent` return type changed to `EventSubmitResult`; `findById` check added as first step
+- `controller/EventController.java` (Gateway) — unwraps `EventSubmitResult` to choose 201 vs 200
+- `service/AccountService.java` (Account Service) — `existsById` check added as first step of `applyTransaction`
 
-**Account Service layer:** Before applying, check if `transactionId` already exists in `transactions` table. If yes, return the existing result without modifying the balance.
+**Gateway layer — how it works:**
+`submitEvent` calls `eventRepository.findById(eventId)` before any write. If the row already exists (with any status: PENDING, PROCESSED, or FAILED), the existing entity is returned immediately:
+- No metadata serialisation
+- No `EventEntity` construction or save
+- No Account Service call
+- Returns `EventSubmitResult(existingEvent, duplicate=true)` → controller returns **200 OK**
 
-**Files modified:**
-- `service/EventService.java` — add duplicate check before save
-- `service/AccountService.java` — add `existsByTransactionId` check before insert
+New events follow the existing two-save flow and return `EventSubmitResult(newEvent, duplicate=false)` → controller returns **201 Created**.
 
-**Why both layers need it:** The Gateway catches 99% of duplicates cheaply. The Account Service protects against the edge case where the Gateway saved the event but crashed before marking it processed, then retried.
+**`EventSubmitResult` instead of a flag on `EventResponse`:**
+Adding a `duplicate` field to `EventResponse` would leak an internal concern into the public API contract. The wrapper keeps the signal internal — the controller consumes it to pick the status code, and the client receives a plain `EventResponse` body either way. Clients that only care about the data can ignore the status code entirely.
+
+**Account Service layer — how it works:**
+`applyTransaction` calls `transactionRepository.existsById(transactionId)` before any write. If the row already exists, the current `AccountEntity.balance` is read and returned without modifying anything:
+- No `TransactionEntity` insert
+- No balance delta applied
+- Returns `TransactionResponse` with the current (unchanged) balance
+
+**Why the Account Service needs its own layer:**
+The Gateway's check covers the common case (client retrying a failed HTTP call). It does not cover the case where:
+1. Gateway saves PENDING ✓
+2. Account Service applies the transaction ✓
+3. Account Service returns 201 ✓
+4. Gateway crashes before saving PROCESSED ✗
+5. Gateway restarts and retries → without Account Service idempotency, the balance would be applied twice
+
+The Account Service's `existsById` check makes the overall system safe against this scenario.
+
+**Why `existsById` (not `findById`) for the Account Service check:**
+`existsById` is a `SELECT COUNT(*)` or `SELECT 1` with a `LIMIT 1` — it returns only a boolean and avoids loading the full entity when a duplicate is detected. `findById` would load the entity unnecessarily in the happy path (no duplicate), adding overhead to every call. Only on the duplicate path (uncommon) do we load the account to get the current balance.
+
+**PK constraint as safety net:**
+The `existsById` + `save` pattern has a TOCTOU (time-of-check to time-of-use) race: two concurrent requests with the same ID can both pass the `existsById` check before either inserts. The primary key constraint on `transactions` catches this — one insert succeeds, the other throws `DataIntegrityViolationException`. This is acceptable for this exercise; production systems would use `INSERT ... ON CONFLICT` or a SELECT-FOR-UPDATE lock.
 
 **Testable after this step:**
-- Submit same `eventId` twice — second call returns `200` with original event, balance unchanged
-- Verify Account Service receives only one transaction
+- Submit same `eventId` twice → second response is 200 OK with identical body; `GET /accounts/{id}/balance` unchanged
+- Submit same `eventId` after a FAILED event → returns the FAILED event as-is (no retry to Account Service)
+- Directly POST the same `transactionId` twice to Account Service → second call returns current balance, no double-apply
 
 ---
 
