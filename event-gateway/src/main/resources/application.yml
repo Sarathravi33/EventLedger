@@ -1,0 +1,42 @@
+spring:
+  application:
+    # Service name appears in structured log output to identify the source of each log line
+    name: event-gateway
+
+  datasource:
+    # In-memory H2 database, isolated to this service.
+    # DB_CLOSE_DELAY=-1  : keeps the database alive as long as the JVM is running
+    # DB_CLOSE_ON_EXIT=FALSE : prevents H2 from shutting down when the last connection closes
+    url: jdbc:h2:mem:eventgatewaydb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      # create-drop: schema is created from @Entity classes on startup and dropped on shutdown.
+      # Appropriate for in-memory databases — no migration files needed.
+      ddl-auto: create-drop
+    # Set to true temporarily to inspect generated SQL during development
+    show-sql: false
+
+  h2:
+    console:
+      # H2 web console for inspecting the in-memory database during development.
+      # Access at: http://localhost:8080/h2-console
+      # JDBC URL to enter: jdbc:h2:mem:eventgatewaydb
+      enabled: true
+      path: /h2-console
+
+server:
+  port: 8080
+
+# Base URL of the Account Service — used by AccountServiceClient.
+# Override with ACCOUNT_SERVICE_BASE_URL environment variable when running in Docker.
+account-service:
+  base-url: ${ACCOUNT_SERVICE_BASE_URL:http://localhost:8081}
+
+logging:
+  level:
+    com.eventledger: DEBUG

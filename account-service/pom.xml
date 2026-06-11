@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+        Inherits Spring Boot dependency management and plugin configuration
+        from the parent POM.
+    -->
+    <parent>
+        <groupId>com.eventledger</groupId>
+        <artifactId>event-ledger</artifactId>
+        <version>1.0.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>account-service</artifactId>
+    <name>Account Service</name>
+    <description>Internal service — manages account state, balances, and transaction history</description>
+
+    <dependencies>
+
+        <!-- REST API support: embedded Tomcat, Jackson JSON serialization, Spring MVC -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- JPA/Hibernate ORM for mapping Java entities to H2 tables -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <!--
+            H2 in-memory database. Scoped to runtime because application code
+            uses JPA abstractions and never references H2 classes directly.
+            This is a completely separate in-memory database from the Gateway's —
+            the two services share no data store.
+        -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!--
+            Test framework: JUnit 5, Mockito, MockMvc, Spring Boot Test utilities,
+            and the embedded H2 database used during test runs.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+                Produces a fat JAR containing the application and all its dependencies,
+                runnable with: java -jar account-service-1.0.0.jar
+            -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

@@ -35,16 +35,48 @@ Each service follows the same layered architecture. Each layer has exactly one r
 
 **What:** Maven parent project with two child modules. Both services start up and respond to nothing useful yet.
 
+**Technology versions:**
+- Java: 21
+- Spring Boot: 3.2.5 (parent POM provides all dependency version management)
+
+**Package structure:**
+- Event Gateway: `com.eventledger.gateway`
+- Account Service: `com.eventledger.account`
+
 **Files created:**
-- `pom.xml` (parent, declares two modules)
-- `event-gateway/pom.xml` (Spring Boot dependencies declared)
-- `account-service/pom.xml` (Spring Boot dependencies declared)
-- `event-gateway/src/main/.../EventGatewayApplication.java`
-- `account-service/src/main/.../AccountServiceApplication.java`
-- `event-gateway/src/main/resources/application.yml` (port 8080, H2, app name)
+- `pom.xml` (parent, declares two modules, sets `java.version=21`)
+- `event-gateway/pom.xml` — dependencies: `spring-boot-starter-web`, `spring-boot-starter-data-jpa`, `h2` (runtime), `spring-boot-starter-test`
+- `account-service/pom.xml` — same dependencies, no shared code with Gateway
+- `event-gateway/src/main/java/com/eventledger/gateway/EventGatewayApplication.java`
+- `account-service/src/main/java/com/eventledger/account/AccountServiceApplication.java`
+- `event-gateway/src/main/resources/application.yml` (port 8080, H2, app name, account-service URL)
 - `account-service/src/main/resources/application.yml` (port 8081, H2, app name)
 
-**Testable after this step:** Both services start. H2 console accessible. No endpoints yet.
+**Key configuration decisions:**
+
+- **H2 database names**: Gateway uses `eventgatewaydb`, Account Service uses `accountservicedb`. Different names make the isolation explicit and each is inspectable independently via the H2 console.
+  - Gateway H2 console: `http://localhost:8080/h2-console` → JDBC URL: `jdbc:h2:mem:eventgatewaydb`
+  - Account Service H2 console: `http://localhost:8081/h2-console` → JDBC URL: `jdbc:h2:mem:accountservicedb`
+
+- **`ddl-auto: create-drop`**: Schema is derived automatically from `@Entity` classes on startup and dropped on shutdown. No SQL migration files needed for an in-memory database.
+
+- **`account-service.base-url`** in `event-gateway/application.yml` uses an environment variable override:
+  ```yaml
+  account-service:
+    base-url: ${ACCOUNT_SERVICE_BASE_URL:http://localhost:8081}
+  ```
+  This means the same config file works both locally (falls back to `localhost:8081`) and inside Docker Compose (where the env var overrides to the container hostname) without modification.
+
+- **`logging.level.com.eventledger: DEBUG`** set in both `application.yml` files for visibility during development. Will be replaced with structured JSON logging in Step 9.
+
+**Dependencies intentionally NOT added in this step** (added in the step that first uses them):
+- `spring-boot-starter-validation` — added in Step 4
+- `spring-boot-starter-actuator` — added in Step 11
+- `resilience4j-spring-boot3` — added in Step 10
+- `micrometer-tracing-bridge-otel`, `logstash-logback-encoder` — added in Step 9
+- WireMock — added in Step 12
+
+**Testable after this step:** Both services start. H2 console accessible at the URLs above. No endpoints yet.
 
 ---
 
@@ -99,6 +131,9 @@ Each service follows the same layered architecture. Each layer has exactly one r
 ## Step 4 — Input Validation and Error Handling
 
 **What:** Bean Validation constraints on `EventRequest`. A single `GlobalExceptionHandler` that intercepts all errors and converts them into a consistent JSON error format. No business logic.
+
+**Dependency added in this step:**
+- `spring-boot-starter-validation` added to `event-gateway/pom.xml` — this is a separate artifact in Spring Boot 3.x and is not bundled with `spring-boot-starter-web`. It provides `@Valid`, `@NotBlank`, `@Positive`, `@Pattern`, and `MethodArgumentNotValidException`.
 
 **Files created:**
 
@@ -168,7 +203,7 @@ Each service follows the same layered architecture. Each layer has exactly one r
 
 **Files modified:**
 - `client/AccountServiceClient.java` — real implementation using `RestTemplate`
-- `config/RestTemplateConfig.java` — `RestTemplate` bean with base URL configured from `application.yml`
+- `config/RestTemplateConfig.java` — `RestTemplate` bean; reads `account-service.base-url` from `application.yml` (this property was already added in Step 1 — nothing new to configure here)
 
 **What crosses the wire:** `TransactionRequest` (eventId, type, amount, currency, eventTimestamp) → Account Service returns `TransactionResponse` (transactionId, accountId, newBalance).
 
@@ -246,6 +281,9 @@ Each service follows the same layered architecture. Each layer has exactly one r
 
 **What:** Health endpoints on both services that actively probe the database. Custom Micrometer metrics: event submission counter and Account Service call timer.
 
+**Dependencies added in this step:**
+- `spring-boot-starter-actuator` added to both `event-gateway/pom.xml` and `account-service/pom.xml` — provides the `/actuator/metrics` endpoint and the Micrometer `MeterRegistry` used by `MetricsService`.
+
 **Files created:**
 
 *Both services:*
@@ -282,6 +320,9 @@ account-service/test/
   integration/
     AccountApiIntegrationTest.java      - full transaction apply/balance/list flows
 ```
+
+**Dependency added in this step:**
+- WireMock added to `event-gateway/pom.xml` (test scope): `org.springframework.cloud:spring-cloud-contract-wiremock` — provides an embedded WireMock server for simulating Account Service responses in `CircuitBreakerTest` and `TracePropagationTest`.
 
 **Tooling:** `@SpringBootTest` for integration, `@DataJpaTest` for repository, `WireMock` for simulating Account Service, `MockMvc` for controller tests.
 

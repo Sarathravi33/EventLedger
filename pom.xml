@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+        Spring Boot parent provides dependency version management for the entire ecosystem.
+        Child modules inherit these versions without declaring them explicitly.
+    -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.2.5</version>
+        <relativePath/>
+    </parent>
+
+    <!--
+        This is the parent (aggregator) POM. It does not produce a JAR.
+        Its only job is to declare the two child modules and shared properties.
+    -->
+    <groupId>com.eventledger</groupId>
+    <artifactId>event-ledger</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+    <name>Event Ledger</name>
+    <description>Distributed financial transaction event system</description>
+
+    <modules>
+        <module>event-gateway</module>
+        <module>account-service</module>
+    </modules>
+
+    <properties>
+        <java.version>21</java.version>
+    </properties>
+
+</project>
