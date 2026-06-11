@@ -3,3 +3,4 @@ E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\model\dto\Eve
 E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\EventGatewayApplication.java
 E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\model\entity\EventEntity.java
 E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\model\EventStatus.java
+E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\repository\EventRepository.java

@@ -122,22 +122,43 @@ Each service follows the same layered architecture. Each layer has exactly one r
 
 **What:** Spring Data JPA interfaces. Custom queries for ordering and filtering. No business logic — only data access.
 
+**Inherited vs custom methods:**
+All repositories extend `JpaRepository<Entity, String>`. Where the plan listed a method whose logic is already covered by an inherited `JpaRepository` method, the inherited version is used instead to avoid redundant declarations:
+
+| Plan listed | Actually used | Reason |
+|---|---|---|
+| `findByEventId(String id)` | inherited `findById(String id)` | `eventId` is the `@Id` field — derived query and PK lookup are identical |
+| `existsByTransactionId(String id)` | inherited `existsById(String id)` | `transactionId` is the `@Id` field — same reasoning |
+
+Custom queries are only declared when the inherited methods cannot express the intent (ordering, aggregation).
+
 **Files created:**
 
 *Event Gateway:*
 - `repository/EventRepository.java`
-  - `findByEventId(String eventId)`
-  - `findByAccountIdOrderByEventTimestampAsc(String accountId)`
+  - **Inherited:** `findById(String eventId)` — retrieve by PK; returns `Optional<EventEntity>`
+  - **Inherited:** `save(EventEntity)` — insert or update; duplicate PK throws `DataIntegrityViolationException`
+  - **Custom (derived):** `findByAccountIdOrderByEventTimestampAsc(String accountId)` — account-scoped listing sorted by `eventTimestamp ASC`, not by insertion order
 
 *Account Service:*
 - `repository/AccountRepository.java`
-  - Standard CRUD
+  - All operations covered by inherited methods: `findById`, `save`, `existsById`
+  - No custom queries needed — balance and history live in `TransactionRepository`
 - `repository/TransactionRepository.java`
-  - `findByAccountIdOrderByEventTimestampAsc(String accountId)`
-  - `existsByTransactionId(String transactionId)` — used for idempotency later
-  - `sumAmountByAccountIdAndType(String accountId, String type)` — used for balance
+  - **Inherited:** `save(TransactionEntity)` — insert a new transaction
+  - **Inherited:** `existsById(String transactionId)` — idempotency check before applying; fast PK lookup
+  - **Custom (derived):** `findByAccountIdOrderByEventTimestampAsc(String accountId)` — chronological transaction history
+  - **Custom (`@Query`):** `sumAmountByAccountIdAndType(String accountId, String type)` — JPQL SUM used to compute balance:
+    ```sql
+    SELECT COALESCE(SUM(t.amount), 0)
+    FROM TransactionEntity t
+    WHERE t.accountId = :accountId AND t.type = :type
+    ```
+    `COALESCE(..., 0)` returns `BigDecimal.ZERO` instead of `null` when no transactions of that type exist yet. The service calls this twice — once for `"CREDIT"`, once for `"DEBIT"` — and subtracts to get the net balance.
 
-**Testable after this step:** Repository tests with `@DataJpaTest` — insert rows, query back in correct order.
+**Why `@Query` is needed for balance:** Spring Data cannot derive an aggregation (`SUM`) from a method name alone. Derived query names only support filtering and ordering — not aggregate functions.
+
+**Testable after this step:** `@DataJpaTest` tests — insert rows with different `eventTimestamp` values out of insertion order, assert the returned list is sorted by `eventTimestamp ASC`. Insert two transactions and assert `sumAmountByAccountIdAndType` returns the correct total.
 
 ---
 
