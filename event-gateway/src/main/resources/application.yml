@@ -53,6 +53,26 @@ management:
       # Reduce to 0.1 (10%) in high-traffic production environments.
       probability: 1.0
 
+# Circuit breaker configuration for the Account Service call.
+# resilience4j-spring-boot3 auto-configures a CircuitBreaker instance named
+# "accountService" from these properties, matching @CircuitBreaker(name="accountService")
+# in AccountServiceClient.
+resilience4j:
+  circuitbreaker:
+    instances:
+      accountService:
+        # Evaluate failure rate over the last 10 calls (COUNT_BASED window).
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        # Open the circuit when 50% or more of the last 10 calls fail.
+        failure-rate-threshold: 50
+        # Stay OPEN for 10 seconds before transitioning to HALF_OPEN.
+        wait-duration-in-open-state: 10s
+        # In HALF_OPEN state, allow 3 probe calls before deciding to close or re-open.
+        permitted-number-of-calls-in-half-open-state: 3
+        # Expose circuit breaker state via /actuator/health (added in Step 11).
+        register-health-indicator: true
+
 # Log levels are configured in logback-spring.xml (com.eventledger at DEBUG,
 # everything else at INFO). logback-spring.xml also sets the JSON format with
 # traceId and spanId included in every line via LogstashEncoder + MDC.

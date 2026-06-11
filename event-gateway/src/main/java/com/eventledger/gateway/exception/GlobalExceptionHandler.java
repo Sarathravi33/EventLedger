@@ -1,5 +1,6 @@
 package com.eventledger.gateway.exception;
 
+import com.eventledger.gateway.exception.AccountServiceUnavailableException;
 import com.eventledger.gateway.model.dto.ErrorResponse;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
@@ -130,6 +131,32 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .badRequest()
                 .body(new ErrorResponse(ex.getMessage()));
+    }
+
+    // -------------------------------------------------------------------------
+    // 503 Service Unavailable
+    // -------------------------------------------------------------------------
+
+    /**
+     * Maps Account Service failures to 503 Service Unavailable.
+     *
+     * Thrown by AccountServiceClient in two situations:
+     *   - The HTTP call failed (network error, read timeout, non-2xx response) —
+     *     the fallback method converts the raw exception to this type.
+     *   - The Resilience4j circuit breaker is OPEN — the call was not attempted
+     *     and CallNotPermittedException was caught by the fallback.
+     *
+     * The client receives a stable error message that does not leak internal
+     * details (host names, port numbers, downstream error bodies).
+     * The full cause is logged at WARN for operational visibility.
+     */
+    @ExceptionHandler(AccountServiceUnavailableException.class)
+    public ResponseEntity<ErrorResponse> handleAccountServiceUnavailable(
+            AccountServiceUnavailableException ex) {
+        log.warn("Account Service unavailable: {}", ex.getMessage());
+        return ResponseEntity
+                .status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(new ErrorResponse("Account Service unavailable — please try again later"));
     }
 
     // -------------------------------------------------------------------------

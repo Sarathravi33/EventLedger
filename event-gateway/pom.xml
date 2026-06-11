@@ -55,6 +55,30 @@
         </dependency>
 
         <!--
+            Resilience4j Spring Boot 3 starter — provides @CircuitBreaker, @RateLimiter,
+            and related annotations via AOP. Auto-configures circuit breaker instances
+            declared under resilience4j.circuitbreaker.instances in application.yml.
+            Version pinned in parent pom <properties> as resilience4j.version.
+        -->
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-spring-boot3</artifactId>
+            <version>${resilience4j.version}</version>
+        </dependency>
+
+        <!--
+            Spring AOP — required for Resilience4j annotations to work.
+            @CircuitBreaker is implemented as an AOP around-advice. Without
+            spring-aop + aspectjweaver on the classpath, the annotation is
+            present but the proxy is never created and the circuit breaker
+            never activates.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+
+        <!--
             Micrometer Tracing bridge to the OpenTelemetry SDK.
             Enables distributed tracing: creates spans per request, populates the
             MDC with traceId and spanId (read by logback-spring.xml on every log line),

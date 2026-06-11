@@ -33,6 +33,11 @@
 
     <properties>
         <java.version>21</java.version>
+        <!--
+            Resilience4j is not managed by the Spring Boot BOM — version must be
+            declared explicitly. 2.2.0 is the first release targeting Spring Boot 3.2.x.
+        -->
+        <resilience4j.version>2.2.0</resilience4j.version>
     </properties>
 
 </project>

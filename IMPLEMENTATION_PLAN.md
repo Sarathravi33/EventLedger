@@ -477,30 +477,63 @@ The `existsById` + `save` pattern has a TOCTOU (time-of-check to time-of-use) ra
 
 ## Step 10 — Resiliency (Circuit Breaker)
 
-**What:** Resilience4j circuit breaker wrapping the Account Service call. When the Account Service repeatedly fails, the circuit opens and subsequent calls fail immediately with a fallback response. Gateway returns `503` — not `500`, not a hang.
+**What:** Resilience4j circuit breaker wrapping the Account Service call. When the Account Service repeatedly fails, the circuit opens and subsequent calls short-circuit immediately. Gateway returns 503 to the client — not 500, not an indefinite hang.
 
-**Dependencies added:** `resilience4j-spring-boot3`, `resilience4j-circuitbreaker`, `resilience4j-timelimiter`
+**Dependencies added (Gateway only):**
+
+| Dependency | Why |
+|---|---|
+| `io.github.resilience4j:resilience4j-spring-boot3:2.2.0` | Provides `@CircuitBreaker` annotation and auto-configures circuit breaker instances from `application.yml`. Not managed by Spring Boot BOM — version declared in parent `<properties>` as `${resilience4j.version}`. |
+| `org.springframework.boot:spring-boot-starter-aop` | Required for `@CircuitBreaker` to function. The annotation is implemented as an AOP around-advice; without `spring-aop` + `aspectjweaver` on the classpath the annotation is present but the proxy is never created and the circuit breaker silently does nothing. |
 
 **Files created/modified:**
-- `config/ResilienceConfig.java` (Gateway) — circuit breaker bean, failure rate threshold, wait duration, timeout
-- `client/AccountServiceClient.java` — `@CircuitBreaker(name = "accountService", fallbackMethod = "fallback")` on the call method, fallback throws `AccountServiceUnavailableException`
-- `exception/GlobalExceptionHandler.java` — maps `AccountServiceUnavailableException` to `503`
-- `event-gateway/src/main/resources/application.yml` — resilience4j configuration block
+
+- `pom.xml` (parent) — added `<resilience4j.version>2.2.0</resilience4j.version>` property for single-point version management
+- `event-gateway/pom.xml` — two new dependencies above
+- `event-gateway/src/main/resources/application.yml` — `resilience4j.circuitbreaker.instances.accountService` configuration block
+- `config/RestTemplateConfig.java` — added `connectTimeout(2s)` and `readTimeout(3s)` on the `RestTemplateBuilder`
+- `client/AccountServiceClient.java` — `@CircuitBreaker` annotation + fallback method; try/catch removed
+- `exception/GlobalExceptionHandler.java` — 503 handler for `AccountServiceUnavailableException`
+
+**No `ResilienceConfig.java`:** The original plan included this. It was dropped because `resilience4j-spring-boot3` fully auto-configures circuit breaker instances from `application.yml` — no Java bean declaration needed. Adding a `@Configuration` class would duplicate what auto-configuration already handles.
 
 **Circuit breaker settings:**
 
 | Setting | Value | Reason |
 |---|---|---|
-| `slidingWindowSize` | 10 | Evaluate over last 10 calls |
-| `failureRateThreshold` | 50% | Open if half or more fail |
-| `waitDurationInOpenState` | 10s | Stay open 10 seconds |
-| `permittedCallsInHalfOpen` | 3 | Probe 3 calls before fully closing |
-| `timeoutDuration` | 3s | Don't wait more than 3s per call |
+| `sliding-window-type` | `COUNT_BASED` | Evaluate failure rate over a fixed number of calls, not a time window |
+| `sliding-window-size` | `10` | Evaluate the last 10 calls — small enough to respond quickly in testing |
+| `failure-rate-threshold` | `50` | Open if 5 or more of the last 10 calls fail |
+| `wait-duration-in-open-state` | `10s` | Stay OPEN for 10 s before probing for recovery |
+| `permitted-number-of-calls-in-half-open-state` | `3` | Allow 3 probe calls in HALF_OPEN; if ≥50% succeed, close the circuit |
+| `register-health-indicator` | `true` | Expose circuit state at `/actuator/health` (Step 11) |
+
+**Timeouts on RestTemplate instead of `@TimeLimiter`:**
+The original plan listed `resilience4j-timelimiter` as a dependency. It was dropped. Resilience4j `@TimeLimiter` requires async return types (`CompletableFuture`, `Mono`) — wrapping a synchronous void method with it would require changing the method signature significantly. HTTP-level timeouts on the `RestTemplate` achieve the same goal cleanly:
+- `connectTimeout: 2s` — fail fast if the TCP socket cannot be opened
+- `readTimeout: 3s` — abort if the Account Service accepts the connection but stalls
+
+These throw `ResourceAccessException` which the circuit breaker counts as a failure. Worst-case latency added per call when Account Service is down: one 3-second read timeout; after that the failure rate threshold is hit and the circuit opens — subsequent calls fail in microseconds.
+
+**Fallback design — single exception type for all failures:**
+The try/catch blocks in `applyTransaction` were removed. The `@CircuitBreaker` fallback (`applyTransactionFallback`) is now the only place exceptions are converted to `AccountServiceUnavailableException`. This unifies three failure modes:
+
+| Cause | Exception reaching fallback | Result |
+|---|---|---|
+| Network failure / timeout | `ResourceAccessException` | `AccountServiceUnavailableException` |
+| Non-2xx HTTP response | `HttpStatusCodeException` | `AccountServiceUnavailableException` |
+| Circuit OPEN | `CallNotPermittedException` | `AccountServiceUnavailableException` |
+
+`EventService` and `GlobalExceptionHandler` see exactly one exception type regardless of why the Account Service was unavailable.
+
+**503 handler in GlobalExceptionHandler:**
+`AccountServiceUnavailableException` was defined in Step 5 but mapped to 500 by the generic catch-all until now. The dedicated handler added in this step returns 503 with a stable client-facing message — no internal details (host, port, downstream error body) leak to the caller.
 
 **Testable after this step:**
-- Stop Account Service → POST /events returns 503
-- GET /events/{id} and GET /events?account= still return data (Gateway-only)
-- Restart Account Service after 10s → circuit closes, POST /events works again
+- Stop Account Service → first few `POST /events` return 503 with FAILED event saved; after 5 failures the circuit opens
+- With circuit open → `POST /events` returns 503 immediately (no 3-second timeout wait)
+- `GET /events/{id}` and `GET /events?account=` still return data — these are Gateway-only reads, unaffected by the circuit breaker
+- Restart Account Service → after 10s the circuit moves to HALF_OPEN; 3 successful probe calls close it; `POST /events` returns 201 again
 
 ---
 
