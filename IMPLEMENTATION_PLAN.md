@@ -222,20 +222,44 @@ Custom queries are only declared when the inherited methods cannot express the i
 **Files created:**
 
 *Event Gateway:*
+- `exception/AccountServiceUnavailableException.java` — runtime exception defined now so `EventService` can reference it; the stub never throws it. Added to `GlobalExceptionHandler` as 503 in Step 10.
+- `client/AccountServiceClient.java` — stub: no-op method, always returns normally. Method signature is fixed here so the service layer is unaffected when the real implementation replaces it in Step 7.
 - `service/EventService.java`
-  - `submitEvent(EventRequest)` — saves event, marks status `PENDING`, calls stub
-  - `getEventById(String eventId)` — looks up by PK, throws if not found
-  - `getEventsByAccount(String accountId)` — returns ordered list
+  - `submitEvent(EventRequest)` → returns `EventResponse`
+  - `getEventById(String eventId)` → returns `EventResponse`, throws `NoSuchElementException` if not found
+  - `getEventsByAccount(String accountId)` → returns `List<EventResponse>`, empty list if none
 - `controller/EventController.java`
-  - `POST /events` → calls `EventService.submitEvent`
-  - `GET /events/{id}` → calls `EventService.getEventById`
-  - `GET /events?account=` → calls `EventService.getEventsByAccount`
-- `client/AccountServiceClient.java` — stub that returns a hardcoded success response
+  - `POST /events` → `@Valid @RequestBody EventRequest` → 201 Created (200 OK for duplicates added in Step 8)
+  - `GET /events/{eventId}` → 200 OK or 404
+  - `GET /events?account=` → 200 OK with list (empty array if no events, never 404)
+
+**Key design decisions:**
+
+**`submitEvent` transaction strategy — no `@Transactional` on the method:**
+Spring Data's `save()` runs in its own short transaction. This is intentional: if the method were wrapped in a single `@Transactional`, an exception from the Account Service call would roll back the entire method, reverting the FAILED status update and losing the event record. The two-save pattern instead guarantees:
+- First `save()` commits PENDING before the Account Service call — event is always persisted.
+- Second `save()` commits PROCESSED or FAILED after the call — audit trail is always complete.
+
+Read methods use `@Transactional(readOnly = true)` to allow the JPA provider to skip dirty-checking.
+
+**Metadata serialisation:**
+`ObjectMapper` is injected as a constructor dependency (Spring Boot auto-configures it with the `application.yml` settings). Metadata is serialised `Map<String,Object> → JSON string` on write and deserialised in reverse on read, inside private helper methods. Both helpers guard against `JsonProcessingException` with a warn log but no throw — a `Map` constructed from Jackson-parsed input can always round-trip without error.
+
+**Controller has no try/catch — error flow:**
+- `@Valid` triggers validation before the method body runs. Failures throw `MethodArgumentNotValidException` → `GlobalExceptionHandler` → 400.
+- `NoSuchElementException` from service → `GlobalExceptionHandler` → 404.
+- `AccountServiceUnavailableException` from service → `GlobalExceptionHandler` (Step 10) → 503.
+- Missing `?account=` parameter → `MissingServletRequestParameterException` → `GlobalExceptionHandler` → 400.
+
+**Response code for POST /events:**
+Returns 201 Created in this step. Step 8 (idempotency) changes the response to 200 OK for duplicate submissions. The controller signature (`submitEvent` returns `EventResponse`) will be updated in Step 8 to carry a `isDuplicate` flag via a wrapper result type.
 
 **Testable after this step:**
-- Submit events, retrieve them, list them in chronological order by `eventTimestamp`
-- Submit events with out-of-order timestamps, verify listing order is by `eventTimestamp` not arrival order
-- Validation errors return correct 400 responses
+- `POST /events` with valid payload → 201, event stored, status PROCESSED
+- `POST /events` with invalid payload → 400 with field-level error details
+- `GET /events/{eventId}` → 200 with event; unknown id → 404
+- `GET /events?account=` → 200 with chronologically ordered list; empty account → `[]`
+- Submit three events with out-of-order timestamps, verify list returns them sorted by `eventTimestamp` not arrival order
 
 ---
 

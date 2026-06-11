@@ -1,8 +1,12 @@
 E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\exception\GlobalExceptionHandler.java
 E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\model\dto\EventResponse.java
 E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\model\dto\EventRequest.java
+E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\client\AccountServiceClient.java
 E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\model\dto\ErrorResponse.java
+E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\service\EventService.java
 E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\EventGatewayApplication.java
 E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\model\entity\EventEntity.java
 E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\model\EventStatus.java
 E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\repository\EventRepository.java
+E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\exception\AccountServiceUnavailableException.java
+E:\EventLedger\event-gateway\src\main\java\com\eventledger\gateway\controller\EventController.java
