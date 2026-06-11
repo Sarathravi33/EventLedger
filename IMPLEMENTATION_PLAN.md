@@ -167,18 +167,51 @@ Custom queries are only declared when the inherited methods cannot express the i
 **What:** Bean Validation constraints on `EventRequest`. A single `GlobalExceptionHandler` that intercepts all errors and converts them into a consistent JSON error format. No business logic.
 
 **Dependency added in this step:**
-- `spring-boot-starter-validation` added to `event-gateway/pom.xml` — this is a separate artifact in Spring Boot 3.x and is not bundled with `spring-boot-starter-web`. It provides `@Valid`, `@NotBlank`, `@Positive`, `@Pattern`, and `MethodArgumentNotValidException`.
+- `spring-boot-starter-validation` added to `event-gateway/pom.xml` — this is a separate artifact in Spring Boot 3.x and is not bundled with `spring-boot-starter-web`. It provides `@Valid`, `@Validated`, `@NotBlank`, `@NotNull`, `@Positive`, `@Pattern`, `@Size`, `MethodArgumentNotValidException`, and `ConstraintViolationException`.
 
-**Files created:**
+**Files created/modified:**
 
 *Event Gateway:*
-- Annotations added to `model/dto/EventRequest.java` (`@NotBlank`, `@Positive`, `@Pattern` for type, etc.)
-- `exception/GlobalExceptionHandler.java` — handles `MethodArgumentNotValidException`, `ConstraintViolationException`, `NoSuchElementException`, generic `Exception`
-- `model/dto/ErrorResponse.java` — the standard error shape: `{ "error": "...", "details": [...] }`
+- `model/dto/EventRequest.java` — validation annotations added to every component of the record
+- `model/dto/ErrorResponse.java` — standard error shape: `{ "error": "...", "details": [...] }`
+- `exception/GlobalExceptionHandler.java` — maps all exception types to HTTP responses
 
-**Why a central exception handler:** Controllers should not contain try/catch blocks for validation errors. One place handles all error mapping; controllers stay clean.
+**Validation constraints on `EventRequest`:**
 
-**Testable after this step:** Unit tests on `EventRequest` validation, MockMvc tests against the exception handler.
+| Field | Constraints | Key decision |
+|---|---|---|
+| `eventId` | `@NotBlank` | — |
+| `accountId` | `@NotBlank` | — |
+| `type` | `@NotBlank` + `@Pattern(regexp = "^(CREDIT\|DEBIT)$")` | Pattern is anchored with `^` and `$` — without anchors, values like `"CREDIT_EXTRA"` would satisfy the regex by partial match |
+| `amount` | `@NotNull` + `@Positive` | Both are required: `@Positive` silently passes `null` without failing, so `@NotNull` must be alongside it to catch a missing field |
+| `currency` | `@NotBlank` + `@Size(min=3, max=3)` | ISO 4217 codes are always exactly 3 characters |
+| `eventTimestamp` | `@NotNull` | Format validation is handled by Jackson before constraints run — a malformed ISO-8601 string throws `HttpMessageNotReadableException` first |
+| `metadata` | none | Optional field; absence is valid |
+
+**`GlobalExceptionHandler` — exception types handled:**
+
+| Exception | HTTP status | When thrown |
+|---|---|---|
+| `MethodArgumentNotValidException` | 400 | `@Valid` fails on `@RequestBody` — collects all field violations so the client receives a complete list |
+| `ConstraintViolationException` | 400 | `@Validated` on class + constraints on method parameters (path vars, query params) |
+| `HttpMessageNotReadableException` | 400 | Jackson cannot deserialise the body (wrong type for a field, broken JSON syntax, empty body). Internal Jackson message is **not** forwarded to the client to avoid leaking class names |
+| `MissingServletRequestParameterException` | 400 | Required `@RequestParam` absent — e.g. `GET /events` without `?account=` |
+| `IllegalArgumentException` | 400 | Business rule violations thrown by the service layer |
+| `NoSuchElementException` | 404 | `Optional.orElseThrow(...)` in service methods when entity not found |
+| `Exception` (catch-all) | 500 | Anything unhandled — full stack trace logged at ERROR, generic message returned to client |
+
+**`ErrorResponse` design:**
+- `details` field is `null` (not an empty list) when absent — combined with `spring.jackson.default-property-inclusion=non_null`, a null `details` field is simply omitted from JSON output. The client never sees `"details": null`.
+- Convenience constructor `ErrorResponse(String error)` sets `details` to null for non-validation errors.
+
+**Logging levels in `GlobalExceptionHandler`:**
+- `DEBUG` — validation failures (400), not-found (404): high-volume, expected, not actionable
+- `WARN` — `IllegalArgumentException`: unexpected business rule violation
+- `ERROR` — unhandled exceptions: always worth investigation
+
+**Why a central exception handler:** Controllers contain no try/catch blocks. All exception-to-HTTP mapping lives in one place, controllers stay clean, and adding a new error condition means editing only `GlobalExceptionHandler`.
+
+**Testable after this step:** Unit tests on `EventRequest` validation constraints, MockMvc tests verifying each exception type produces the correct HTTP status and `ErrorResponse` shape.
 
 ---
 

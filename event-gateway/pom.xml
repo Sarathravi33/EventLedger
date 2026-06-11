@@ -27,6 +27,17 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
+        <!--
+            Bean Validation (JSR-380) via Hibernate Validator.
+            Not bundled with spring-boot-starter-web in Spring Boot 3.x — must be declared
+            explicitly. Provides @NotBlank, @NotNull, @Positive, @Pattern, @Size, @Valid,
+            MethodArgumentNotValidException, and ConstraintViolationException.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
         <!-- JPA/Hibernate ORM for mapping Java entities to H2 tables -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
