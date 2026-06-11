@@ -322,15 +322,47 @@ The original plan omitted these for Step 6, but without them Spring returns its 
 
 ## Step 7 — Service Integration (Gateway calls Account Service for real)
 
-**What:** Replace the stub `AccountServiceClient` with a real `RestTemplate`-based implementation. Define the full request/response contract between the two services. Basic error handling for HTTP failures (non-2xx responses).
+**What:** Replace the stub `AccountServiceClient` with a real `RestTemplate`-based implementation. Gateway now makes a live HTTP call to the Account Service on every `POST /events`. Basic error handling converts all failures into `AccountServiceUnavailableException`.
 
-**Files modified:**
-- `client/AccountServiceClient.java` — real implementation using `RestTemplate`
-- `config/RestTemplateConfig.java` — `RestTemplate` bean; reads `account-service.base-url` from `application.yml` (this property was already added in Step 1 — nothing new to configure here)
+**Files created/modified:**
+- `config/RestTemplateConfig.java` — new `@Configuration` class declaring the `RestTemplate` bean
+- `client/AccountServiceClient.java` — stub body replaced with real `RestTemplate` call; method signature unchanged so `EventService` required no edits
 
-**What crosses the wire:** `TransactionRequest` (eventId, type, amount, currency, eventTimestamp) → Account Service returns `TransactionResponse` (transactionId, accountId, newBalance).
+**What crosses the wire:**
+- **Request:** `POST {baseUrl}/accounts/{accountId}/transactions` with JSON body: `transactionId`, `type`, `amount`, `currency`, `eventTimestamp`
+- **Response:** 2xx indicates success; response body is not read by the Gateway (`Void.class`)
 
-**Testable after this step:** Full `POST /events` flow — Gateway saves event, Account Service applies transaction, Gateway updates event status to `PROCESSED`. Integration test covering both services together.
+**Key design decisions:**
+
+**`RestTemplateBuilder` not `new RestTemplate()`:**
+Spring Boot auto-configures a `RestTemplateBuilder` that applies the application's `HttpMessageConverters`, including the `MappingJackson2HttpMessageConverter` backed by the configured `ObjectMapper`. Using the builder ensures the same Jackson settings apply on the wire:
+- `write-dates-as-timestamps: false` → `Instant` fields serialise as ISO-8601 strings
+- `default-property-inclusion: non_null` → null fields are omitted
+
+A plain `new RestTemplate()` creates its own default `ObjectMapper` and ignores `application.yml` settings entirely — `Instant` would serialise as a timestamp array, breaking `eventTimestamp` deserialization in the Account Service.
+
+**Gateway defines its own wire contract — no shared module:**
+The two services share no code. The Account Service's `TransactionRequest` lives in `account-service` and is not on the Gateway's classpath. A private `TransactionRequestBody` record inside `AccountServiceClient` mirrors the same JSON field names without any cross-module dependency. Keeping the services independent means either can change its internal types without affecting the other, as long as the JSON field names stay in sync.
+
+**`Void.class` response type:**
+`restTemplate.postForEntity(url, body, Void.class)` — the Gateway does not need the Account Service's response body. The only signal it needs is "did the call succeed?". A 2xx response causes the method to return normally; any failure throws. Reading `newBalance` from the response is not needed because the Gateway's `EventResponse` does not expose a balance field — balance queries go directly to `GET /accounts/{id}/balance`.
+
+**Two distinct exception catches:**
+
+| Exception | Cause | Action |
+|---|---|---|
+| `ResourceAccessException` | Network failure: connection refused, host unreachable, read timeout | Throw `AccountServiceUnavailableException` with cause |
+| `HttpStatusCodeException` | Account Service returned non-2xx (4xx or 5xx) | Throw `AccountServiceUnavailableException` with status code in message |
+
+Both are mapped to the same `AccountServiceUnavailableException` so `EventService` (and later the circuit breaker in Step 10) sees a single exception type regardless of the failure mode.
+
+**`account-service.base-url` injected via `@Value`:**
+The property was added in Step 1. `@Value("${account-service.base-url}")` on the constructor parameter binds it at startup. The default `http://localhost:8081` applies locally; overriding with `ACCOUNT_SERVICE_BASE_URL` env var covers Docker Compose and other environments without changing configuration files.
+
+**Testable after this step:**
+- Start both services; `POST /events` → 201, Account Service applies transaction, Gateway status = PROCESSED
+- Stop Account Service; `POST /events` → event saved as FAILED (status visible on `GET /events/{id}`), currently returns 500 (503 added in Step 10)
+- `GET /events/{id}` and `GET /events?account=` still work with Account Service down (Gateway-only reads)
 
 ---
 
