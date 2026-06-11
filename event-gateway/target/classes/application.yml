@@ -29,6 +29,15 @@ spring:
       enabled: true
       path: /h2-console
 
+  jackson:
+    # Serialize Instant (and other java.time types) as ISO-8601 strings
+    # (e.g. "2026-05-15T14:02:11Z") instead of epoch-second numbers.
+    # Requires Jackson's JavaTimeModule, which Spring Boot auto-configures.
+    serialization:
+      write-dates-as-timestamps: false
+    # Omit null fields from all JSON responses (e.g. metadata when not present).
+    default-property-inclusion: non_null
+
 server:
   port: 8080
 

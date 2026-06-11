@@ -84,24 +84,37 @@ Each service follows the same layered architecture. Each layer has exactly one r
 
 **What:** Define the shape of data. Entities map to database tables. DTOs are the API contract — they are what enters and leaves the service. No logic anywhere in this step.
 
+**Implementation approach — records vs classes:**
+- **DTOs** are implemented as Java **records** — immutable by construction, no boilerplate getters/setters, and concise declarations. Once deserialized, a DTO cannot be mutated as it passes through the layers.
+- **Entities** are plain Java **classes** — JPA requires a no-arg constructor (records cannot provide one), and entities need a `setStatus()` setter so the service layer can update lifecycle state without replacing the object.
+
 **Files created:**
 
 *Event Gateway:*
-- `model/entity/EventEntity.java` — JPA entity, maps to `events` table
-- `model/dto/EventRequest.java` — what `POST /events` receives (no annotations yet)
-- `model/dto/EventResponse.java` — what all event endpoints return
+- `model/EventStatus.java` — enum in the `model/` package (not `model/entity/`): `PENDING | PROCESSED | FAILED`. Represents the lifecycle of an event: saved locally (`PENDING`) → Account Service accepted (`PROCESSED`) or unreachable (`FAILED`).
+- `model/entity/EventEntity.java` — JPA entity, maps to `events` table. `eventId` is the primary key — a duplicate insert throws `DataIntegrityViolationException`, which the service layer uses for idempotency detection. Only `setStatus()` is provided as a setter; all other fields are set at construction and never change.
+- `model/dto/EventRequest.java` — record, inbound `POST /events` payload. No validation annotations yet (added in Step 4). `metadata` is `Map<String, Object>`, null when omitted by the client.
+- `model/dto/EventResponse.java` — record, returned by all event endpoints. Includes `status` from `EventStatus` so clients can see whether the transaction was applied.
 
 *Account Service:*
-- `model/entity/AccountEntity.java` — maps to `accounts` table
-- `model/entity/TransactionEntity.java` — maps to `transactions` table
-- `model/dto/TransactionRequest.java` — what Gateway sends to Account Service
-- `model/dto/TransactionResponse.java` — what Account Service returns
-- `model/dto/AccountResponse.java` — account details with transaction list
-- `model/dto/BalanceResponse.java` — just the balance
+- `model/entity/AccountEntity.java` — JPA entity, maps to `accounts` table. `accountId` is the primary key. Only `setBalance()` and `setLastUpdated()` are mutable — updated together on every transaction.
+- `model/entity/TransactionEntity.java` — JPA entity, maps to `transactions` table. `transactionId` (= `eventId` from the Gateway) is the primary key for idempotency. No `@ManyToOne` to `AccountEntity` — the relationship is stored as a plain `accountId` String to avoid lazy-loading complexity.
+- `model/dto/TransactionRequest.java` — record, the internal HTTP contract between Gateway and Account Service. Carries `transactionId` (= `eventId`) and `eventTimestamp` propagated from the original event.
+- `model/dto/TransactionResponse.java` — record, confirms the transaction was applied and reports the new balance.
+- `model/dto/AccountResponse.java` — record, returned by `GET /accounts/{id}`. Contains a `List<TransactionDetail>` where `TransactionDetail` is a **nested record** inside `AccountResponse`. It is nested because it only ever appears in this context — a separate top-level file would add a class with no independent use. `accountId` is omitted from `TransactionDetail` because it is already present at the parent `AccountResponse` level.
+- `model/dto/BalanceResponse.java` — record, returned by `GET /accounts/{id}/balance`. Contains only `accountId`, `balance`, and `currency`.
+
+**Database column decisions:**
+- `amount` and `balance` fields use `@Column(precision = 15, scale = 2)` → `DECIMAL(15,2)` in H2. Consistent across both services so values round-trip without precision loss.
+- `metadata` in `EventEntity` is `@Column(columnDefinition = "TEXT")` — JPA has no native `Map<String,Object>` type. The field is stored as a raw JSON string. The service layer (Step 5) is responsible for serializing `Map<String,Object> → String` on write and deserializing `String → Map<String,Object>` on read.
+
+**Jackson configuration added to both `application.yml` files in this step:**
+- `spring.jackson.serialization.write-dates-as-timestamps: false` — `Instant` fields serialize as ISO-8601 strings (e.g. `"2026-05-15T14:02:11Z"`) not epoch-second numbers. Requires Jackson's `JavaTimeModule`, which Spring Boot auto-configures.
+- `spring.jackson.default-property-inclusion: non_null` — null fields (e.g. `metadata` when absent) are omitted from JSON responses rather than serialized as `null`.
 
 **Why entities and DTOs are separate:** Entities carry JPA annotations and are tied to the database schema. If you return entities directly from controllers, you couple your API contract to your database schema — a change to one breaks the other. DTOs decouple them.
 
-**Testable after this step:** H2 auto-creates tables from entities on startup. Schema is visible in H2 console.
+**Testable after this step:** H2 auto-creates tables from entities on startup. Schema visible in H2 console with correct column types and constraints.
 
 ---
 
