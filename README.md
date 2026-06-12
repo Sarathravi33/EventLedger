@@ -22,6 +22,8 @@ Browser / Client ──────→  │  Event Gateway API    │
                           └──────────────────────┘
 ```
 
+> **Port conflict note:** If port 8080 is already in use on your machine, start the Gateway with `--server.port=9090` (or any free port). The Account Service URL the Gateway uses is controlled by the `account-service.base-url` property and defaults to `http://localhost:8081` — it is unaffected by the Gateway's own port.
+
 ### Event Gateway API (`event-gateway`, port 8080)
 
 The public entry point for all client requests. Responsibilities:
@@ -38,7 +40,9 @@ The public entry point for all client requests. Responsibilities:
 | `POST` | `/events` | Submit a transaction event |
 | `GET` | `/events/{id}` | Retrieve a single event by ID |
 | `GET` | `/events?account={accountId}` | List events for an account, ordered by event timestamp |
-| `GET` | `/health` | Health check |
+| `GET` | `/health` | Custom health check (probes H2 with `SELECT 1`) |
+| `GET` | `/actuator/health` | Spring Boot Actuator health — includes circuit breaker state |
+| `GET` | `/actuator/metrics` | Micrometer metrics (`events.submitted`, `account.service.call.duration`) |
 
 ### Account Service (`account-service`, port 8081)
 
@@ -55,13 +59,15 @@ An internal service, not exposed to external clients. Responsibilities:
 | `POST` | `/accounts/{accountId}/transactions` | Apply a transaction to an account |
 | `GET` | `/accounts/{accountId}/balance` | Get the current balance |
 | `GET` | `/accounts/{accountId}` | Get account details and transaction history |
-| `GET` | `/health` | Health check |
+| `GET` | `/health` | Custom health check (probes H2 with `SELECT 1`) |
+| `GET` | `/actuator/health` | Spring Boot Actuator health |
+| `GET` | `/actuator/metrics` | Standard JVM and HTTP metrics |
 
 ### How the Services Interact
 
 1. Client submits `POST /events` to the Gateway.
 2. Gateway validates the payload, checks for a duplicate `eventId`, and saves the event locally with status `PENDING`.
-3. Gateway calls `POST /accounts/{accountId}/transactions` on the Account Service (wrapped in a circuit breaker).
+3. Gateway calls `POST /accounts/{accountId}/transactions` on the Account Service (wrapped in a circuit breaker), injecting a W3C `traceparent` header so the two services share the same trace ID in their logs.
 4. Account Service applies the transaction and returns the updated balance.
 5. Gateway updates the event status to `PROCESSED` and returns `201 Created` to the client.
 
@@ -151,6 +157,17 @@ Started EventGatewayApplication in X.XXX seconds
 
 Both services are now running. The Gateway is configured to reach the Account Service at `http://localhost:8081`.
 
+> **If port 8080 is already in use**, start the Gateway on a different port:
+> ```bash
+> cd event-gateway
+> mvn spring-boot:run -Dspring-boot.run.arguments=--server.port=9090
+> ```
+> Or when running the packaged JAR:
+> ```bash
+> java -jar event-gateway/target/event-gateway-1.0.0.jar --server.port=9090
+> ```
+> All Postman collection requests use the `{{gateway_url}}` variable — update that variable to match the port you chose.
+
 ### Verifying Startup
 
 ```bash
@@ -158,10 +175,40 @@ curl http://localhost:8080/health
 curl http://localhost:8081/health
 ```
 
-Both should return:
+Both should return `200 OK` with:
 
 ```json
-{ "status": "UP", "database": "UP" }
+{
+  "status": "UP",
+  "service": "event-gateway",
+  "database": "UP",
+  "timestamp": "2026-06-12T09:00:00Z"
+}
+```
+
+(`"service"` will be `"account-service"` for the Account Service response.)
+
+You can also check the Spring Boot Actuator health endpoint, which additionally reports circuit breaker state on the Gateway:
+
+```bash
+curl http://localhost:8080/actuator/health
+```
+
+```json
+{
+  "status": "UP",
+  "components": {
+    "circuitBreakers": {
+      "status": "UP",
+      "details": {
+        "accountService": {
+          "details": { "state": "CLOSED", ... }
+        }
+      }
+    },
+    "db": { "status": "UP" }
+  }
+}
 ```
 
 ---
@@ -200,17 +247,45 @@ mvn test
 | `IdempotencyIntegrationTest` | Submitting the same `eventId` twice — second call returns `200`, balance unchanged |
 | `OutOfOrderIntegrationTest` | Events with older timestamps arriving after newer ones are listed in the correct chronological order |
 | `CircuitBreakerTest` | WireMock simulates Account Service failures — verifies circuit opens and `503` is returned; verifies `GET` endpoints still respond |
-| `TracePropagationTest` | Asserts that the outbound call to Account Service includes a `traceparent` header |
+| `TracePropagationTest` | Asserts that the outbound call to Account Service includes a valid W3C `traceparent` header |
 | `AccountServiceTest` | Balance computation with CREDITs and DEBITs in arbitrary order |
 | `AccountApiIntegrationTest` | Apply transactions, retrieve balance, list transactions in chronological order |
 
 No external services or databases need to be running to execute the tests — each test uses an in-memory H2 database, and WireMock stubs replace the Account Service where needed.
 
+**Total: 39 tests, 0 failures across both modules.**
+
+---
+
+## Distributed Tracing
+
+Both services use **Micrometer Tracing with the OpenTelemetry bridge** to propagate trace context across service boundaries using the W3C `traceparent` header.
+
+Every inbound request to the Gateway is assigned a `traceId`. When the Gateway calls the Account Service, it constructs the `traceparent` header directly from the current span's `TraceContext`:
+
+```
+traceparent: 00-{32-hex traceId}-{16-hex spanId}-{flags}
+```
+
+The Account Service reads this header on arrival and creates a child span under the same `traceId`. Both services log `traceId` and `spanId` as top-level JSON fields on every log line (via Logstash Logback Encoder). To correlate a request across both service logs, filter both log streams by the same `traceId`.
+
+**Example log correlation:**
+
+```
+# Gateway log
+{ "traceId": "abc123...", "spanId": "a1b2c3d4", "message": "Submitting event evt-001" }
+
+# Account Service log — same traceId, different spanId
+{ "traceId": "abc123...", "spanId": "e5f6a7b8", "message": "Applying CREDIT 150.00 to acct-123" }
+```
+
+Sampling is set to 100% (`management.tracing.sampling.probability: 1.0`). Reduce to `0.1` in high-traffic production environments.
+
 ---
 
 ## Resiliency Pattern: Circuit Breaker
 
-**Choice:** Resilience4j circuit breaker with a time limiter, applied to all Gateway → Account Service calls.
+**Choice:** Resilience4j circuit breaker applied to all Gateway → Account Service calls.
 
 **Why circuit breaker over the alternatives:**
 
@@ -233,3 +308,65 @@ This pattern gives three concrete benefits for this system:
 | Wait duration when open | 10 seconds |
 | Permitted calls in half-open | 3 |
 | Per-call timeout | 3 seconds |
+
+**Observability:** The circuit breaker state (`CLOSED` / `OPEN` / `HALF_OPEN`) is visible in `/actuator/health` under `components.circuitBreakers.details.accountService.details.state`. This requires both `resilience4j.circuitbreaker.instances.accountService.register-health-indicator: true` and `management.health.circuitbreakers.enabled: true` in `application.yml`.
+
+---
+
+## Error Handling
+
+All error responses follow a consistent JSON envelope:
+
+```json
+{ "error": "Human-readable message" }
+```
+
+For validation failures the response also includes a `details` array listing every field violation:
+
+```json
+{
+  "error": "Validation failed",
+  "details": ["eventId: must not be blank", "amount: must be positive"]
+}
+```
+
+| Condition | Status |
+|-----------|--------|
+| Validation failure (`@NotBlank`, `@Positive`, `@Size`) | `400 Bad Request` |
+| Malformed or unreadable JSON body | `400 Bad Request` |
+| Missing required query parameter | `400 Bad Request` |
+| Resource not found (unknown `eventId` or `accountId`) | `404 Not Found` |
+| Request to an unmapped path | `404 Not Found` |
+| Account Service unreachable or circuit open | `503 Service Unavailable` |
+| Unexpected server error | `500 Internal Server Error` |
+
+> **Spring Framework 6.1 note:** The static resource handler raises `NoResourceFoundException` (not the older `NoHandlerFoundException`) when no file matches a requested path. Both exception types are explicitly mapped to `404` in `GlobalExceptionHandler` to prevent them from falling through to the `500` catch-all.
+
+---
+
+## Postman Collection
+
+A ready-to-import Postman collection covering all endpoints across Steps 1–12 is included at the project root:
+
+```
+postman-collection.json
+```
+
+**To import:** In Postman, go to **File → Import**, select `postman-collection.json`, and click **Import**.
+
+The collection uses three variables (edit under the **Variables** tab after importing):
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `gateway_url` | `http://localhost:9090` | Update port if running on a different port |
+| `account_service_url` | `http://localhost:8081` | Update only if Account Service port differs |
+| `test_account_id` | `acct-123` | Account ID used across all test scenarios |
+
+**Recommended run order:**
+1. `[Steps 1-3] Startup Verification` — confirms both services are responding
+2. `Event Gateway → POST /events` — submit `evt-001`, `evt-002`, `evt-003` in order
+3. `Event Gateway → GET /events` — verify out-of-order sorting and not-found behaviour
+4. `Account Service → POST /accounts/.../transactions` — test Account Service in isolation
+5. `Account Service → GET /accounts` — verify balance and sorted history
+6. `Event Gateway → GET /health` and `Account Service → GET /health` — custom health endpoints
+7. `Event Gateway → GET /actuator` — circuit breaker state, metrics, and tagged counters
