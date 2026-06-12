@@ -12,6 +12,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -162,6 +164,22 @@ public class GlobalExceptionHandler {
     // -------------------------------------------------------------------------
     // 404 Not Found
     // -------------------------------------------------------------------------
+
+    /**
+     * Handles requests to paths that have no mapped controller or static resource.
+     *
+     * Spring Framework 6.1 introduced NoResourceFoundException (thrown by the static
+     * resource handler when no file matches). NoHandlerFoundException covers the case
+     * where no handler at all exists for the path. Both must be caught here; otherwise
+     * they fall through to the generic Exception catch-all and return 500.
+     */
+    @ExceptionHandler({NoHandlerFoundException.class, NoResourceFoundException.class})
+    public ResponseEntity<ErrorResponse> handleNoHandler(Exception ex) {
+        log.debug("Route not found: {}", ex.getMessage());
+        return ResponseEntity
+                .status(HttpStatus.NOT_FOUND)
+                .body(new ErrorResponse("No endpoint found for the requested path"));
+    }
 
     /**
      * Handles resource not-found conditions.

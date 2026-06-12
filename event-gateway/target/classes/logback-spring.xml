@@ -6,7 +6,7 @@
     per log line. Every line automatically includes traceId and spanId from the
     MDC, which Micrometer Tracing populates for every inbound HTTP request.
 
-    --- How traceId ends up in the log ---
+    How traceId ends up in the log:
     1. A request arrives at the Gateway.
     2. Micrometer Tracing creates a new span and writes traceId + spanId to the MDC.
     3. The application logs any message (DEBUG, INFO, etc.).
@@ -17,7 +17,7 @@
        automatically. The Account Service reads that header and logs the same
        traceId on its side.
 
-    --- JSON field reference ---
+    JSON field reference:
     @timestamp  ISO-8601 timestamp
     level       DEBUG / INFO / WARN / ERROR
     logger_name short class name

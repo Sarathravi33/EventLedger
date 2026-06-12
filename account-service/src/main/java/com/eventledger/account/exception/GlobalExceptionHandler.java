@@ -7,6 +7,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.NoSuchElementException;
 
@@ -30,6 +32,18 @@ import java.util.NoSuchElementException;
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    /**
+     * Handles requests to paths that have no mapped controller or static resource.
+     * NoResourceFoundException is thrown by Spring Framework 6.1's resource handler;
+     * NoHandlerFoundException covers paths with no handler at all.
+     */
+    @ExceptionHandler({NoHandlerFoundException.class, NoResourceFoundException.class})
+    public ResponseEntity<ErrorResponse> handleNoHandler(Exception ex) {
+        log.debug("Route not found: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ErrorResponse("No endpoint found for the requested path"));
+    }
 
     /**
      * 404 Not Found — account does not exist in the Account Service database.

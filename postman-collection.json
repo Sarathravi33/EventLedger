@@ -2,13 +2,13 @@
   "info": {
     "name": "Event Ledger API",
     "_postman_id": "7a8b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
-    "description": "Full test collection for the Event Ledger system.\n\nEach request is labelled with the step from which it becomes functional.\nRun the [Steps 1-3] folder first to confirm both services are up before anything else.\n\nCollection variables (edit in the Variables tab):\n  gateway_url          — Event Gateway base URL (default: http://localhost:8080)\n  account_service_url  — Account Service base URL (default: http://localhost:8081)\n  test_account_id      — Shared account used across scenarios (default: acct-123)\n\nOut-of-order demonstration:\n  The three CREDIT/DEBIT events in 'POST /events' use timestamps that are NOT\n  in submission order. After submitting all three, GET /events?account= must\n  return them sorted by eventTimestamp (earliest first), not by arrival order.\n    evt-003 → 2026-05-10 (submitted 3rd, earliest timestamp)\n    evt-001 → 2026-05-15 (submitted 1st)\n    evt-002 → 2026-05-16 (submitted 2nd)\n  Expected listing order: evt-003, evt-001, evt-002\n  Expected balance: CREDIT 150 + CREDIT 200 - DEBIT 50 = 300.00",
+    "description": "Full test collection for the Event Ledger system — Steps 1 through 12.\n\nEach request is labelled with the step from which it becomes functional.\nRun the [Steps 1-3] folder first to confirm both services are up before anything else.\n\nCollection variables (edit in the Variables tab):\n  gateway_url          — Event Gateway base URL (default: http://localhost:9090)\n  account_service_url  — Account Service base URL (default: http://localhost:8081)\n  test_account_id      — Shared account used across scenarios (default: acct-123)\n\nOut-of-order demonstration:\n  The three CREDIT/DEBIT events in 'POST /events' use timestamps that are NOT\n  in submission order. After submitting all three, GET /events?account= must\n  return them sorted by eventTimestamp (earliest first), not by arrival order.\n    evt-003 → 2026-05-10 (submitted 3rd, earliest timestamp)\n    evt-001 → 2026-05-15 (submitted 1st)\n    evt-002 → 2026-05-16 (submitted 2nd)\n  Expected listing order: evt-003, evt-001, evt-002\n  Expected balance: CREDIT 150 + CREDIT 200 - DEBIT 50 = 300.00\n\nIdempotency note:\n  Account Service always returns 201 Created for transactions — including duplicates.\n  The duplicate path returns the current balance unchanged without re-applying the amount.\n  Gateway returns 201 for new events and 200 for duplicate eventIds.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     {
       "key": "gateway_url",
-      "value": "http://localhost:8080",
+      "value": "http://localhost:9090",
       "description": "Event Gateway base URL"
     },
     {
@@ -37,7 +37,7 @@
               "host": ["{{gateway_url}}"],
               "path": [""]
             },
-            "description": "Available: Steps 1-3 onwards.\n\nSends a GET to the root path. Spring Boot's default error handler returns a 404 JSON response, confirming the service is listening on port 8080.\n\nExpected response (Spring Boot default error):\n{\n  \"timestamp\": \"...\",\n  \"status\": 404,\n  \"error\": \"Not Found\",\n  \"path\": \"/\"\n}"
+            "description": "Available: Steps 1-3 onwards.\n\nSends a GET to the root path. Spring Framework 6.1 (Spring Boot 3.x) raises\nNoResourceFoundException when the static resource handler finds nothing, which\nGlobalExceptionHandler maps to 404. A 404 confirms the service is up.\n\nExpected response:\n{\n  \"error\": \"No endpoint found for the requested path\"\n}"
           },
           "response": [],
           "event": [
@@ -46,8 +46,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Gateway is responding', function () {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "pm.test('Gateway is responding (404 confirms service is up)', function () {",
+                  "    pm.response.to.have.status(404);",
                   "});",
                   "",
                   "pm.test('Response is JSON', function () {",
@@ -68,7 +68,7 @@
               "host": ["{{account_service_url}}"],
               "path": [""]
             },
-            "description": "Available: Steps 1-3 onwards.\n\nSends a GET to the root path. A 404 JSON response confirms the Account Service is listening on port 8081.\n\nExpected response (Spring Boot default error):\n{\n  \"timestamp\": \"...\",\n  \"status\": 404,\n  \"error\": \"Not Found\",\n  \"path\": \"/\"\n}"
+            "description": "Available: Steps 1-3 onwards.\n\nSends a GET to the root path. Spring Framework 6.1 (Spring Boot 3.x) raises\nNoResourceFoundException when the static resource handler finds nothing, which\nGlobalExceptionHandler maps to 404. A 404 confirms the Account Service is up.\n\nExpected response:\n{\n  \"error\": \"No endpoint found for the requested path\"\n}"
           },
           "response": [],
           "event": [
@@ -77,8 +77,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Account Service is responding', function () {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "pm.test('Account Service is responding (404 confirms service is up)', function () {",
+                  "    pm.response.to.have.status(404);",
                   "});",
                   "",
                   "pm.test('Response is JSON', function () {",
@@ -143,6 +143,10 @@
                       "",
                       "pm.test('Status is PROCESSED', function () {",
                       "    pm.expect(pm.response.json().status).to.equal('PROCESSED');",
+                      "});",
+                      "",
+                      "pm.test('metadata is present in response', function () {",
+                      "    pm.expect(pm.response.json()).to.have.property('metadata');",
                       "});"
                     ]
                   }
@@ -241,7 +245,7 @@
                   "host": ["{{gateway_url}}"],
                   "path": ["events"]
                 },
-                "description": "Available: Step 8+.\n\nExact same eventId as the first CREDIT submission. The Gateway detects the duplicate\nbefore calling the Account Service and returns the original event with 200 OK.\n\nKey difference from the first submission:\n  First submission  → 201 Created  (new event)\n  This submission   → 200 OK       (original event returned, no duplicate)\n\nThe account balance must remain unchanged after this request."
+                "description": "Available: Step 8+.\n\nExact same eventId as the first CREDIT submission. The Gateway detects the duplicate\nbefore calling the Account Service and returns the original event with 200 OK.\n\nKey difference from the first submission:\n  First submission  → 201 Created  (new event)\n  This submission   → 200 OK       (original event returned, Account Service not called)\n\nThe account balance must remain unchanged after this request."
               },
               "response": [],
               "event": [
@@ -280,7 +284,7 @@
                   "host": ["{{gateway_url}}"],
                   "path": ["events"]
                 },
-                "description": "Available: Step 4+.\n\nMissing required field: eventId. Expected: 400 Bad Request with a message identifying the missing field."
+                "description": "Available: Step 4+.\n\nMissing required field: eventId (@NotBlank). Expected: 400 Bad Request with error field."
               },
               "response": [],
               "event": [
@@ -293,9 +297,8 @@
                       "    pm.response.to.have.status(400);",
                       "});",
                       "",
-                      "pm.test('Error message identifies missing field', function () {",
-                      "    var json = pm.response.json();",
-                      "    pm.expect(json).to.have.property('error');",
+                      "pm.test('Error field is present', function () {",
+                      "    pm.expect(pm.response.json()).to.have.property('error');",
                       "});"
                     ]
                   }
@@ -317,7 +320,7 @@
                   "host": ["{{gateway_url}}"],
                   "path": ["events"]
                 },
-                "description": "Available: Step 4+.\n\ntype must be 'CREDIT' or 'DEBIT'. 'TRANSFER' is invalid.\nExpected: 400 Bad Request."
+                "description": "Available: Step 4+.\n\ntype must match ^(CREDIT|DEBIT)$. 'TRANSFER' is not allowed.\nExpected: 400 Bad Request."
               },
               "response": [],
               "event": [
@@ -341,7 +344,7 @@
                 "header": [{ "key": "Content-Type", "value": "application/json" }],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n    \"eventId\": \"evt-bad-amount\",\n    \"accountId\": \"{{test_account_id}}\",\n    \"type\": \"CREDIT\",\n    \"amount\": 0,\n    \"currency\": \"USD\",\n    \"eventTimestamp\": \"2026-05-15T14:02:11Z\"\n}",
+                  "raw": "{\n    \"eventId\": \"evt-bad-amount-zero\",\n    \"accountId\": \"{{test_account_id}}\",\n    \"type\": \"CREDIT\",\n    \"amount\": 0,\n    \"currency\": \"USD\",\n    \"eventTimestamp\": \"2026-05-15T14:02:11Z\"\n}",
                   "options": { "raw": { "language": "json" } }
                 },
                 "url": {
@@ -349,7 +352,71 @@
                   "host": ["{{gateway_url}}"],
                   "path": ["events"]
                 },
-                "description": "Available: Step 4+.\n\namount must be greater than 0. Zero is invalid.\nExpected: 400 Bad Request."
+                "description": "Available: Step 4+.\n\namount uses @Positive — zero is not positive.\nExpected: 400 Bad Request."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 400 Bad Request', function () {",
+                      "    pm.response.to.have.status(400);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Validation — Negative Amount [Step 4+]",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"eventId\": \"evt-bad-amount-neg\",\n    \"accountId\": \"{{test_account_id}}\",\n    \"type\": \"CREDIT\",\n    \"amount\": -10.00,\n    \"currency\": \"USD\",\n    \"eventTimestamp\": \"2026-05-15T14:02:11Z\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{gateway_url}}/events",
+                  "host": ["{{gateway_url}}"],
+                  "path": ["events"]
+                },
+                "description": "Available: Step 4+.\n\namount uses @Positive — negative values are not allowed.\nExpected: 400 Bad Request."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 400 Bad Request', function () {",
+                      "    pm.response.to.have.status(400);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Validation — Currency Not 3 Chars [Step 4+]",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"eventId\": \"evt-bad-currency\",\n    \"accountId\": \"{{test_account_id}}\",\n    \"type\": \"CREDIT\",\n    \"amount\": 100.00,\n    \"currency\": \"US\",\n    \"eventTimestamp\": \"2026-05-15T14:02:11Z\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{gateway_url}}/events",
+                  "host": ["{{gateway_url}}"],
+                  "path": ["events"]
+                },
+                "description": "Available: Step 4+.\n\ncurrency uses @Size(min=3, max=3) — ISO 4217 codes must be exactly 3 characters.\n'US' is 2 characters and must be rejected.\nExpected: 400 Bad Request."
               },
               "response": [],
               "event": [
@@ -416,7 +483,7 @@
                   "host": ["{{gateway_url}}"],
                   "path": ["events", "evt-does-not-exist"]
                 },
-                "description": "Available: Step 5+.\n\nRequests an eventId that was never submitted. Expected: 404 Not Found."
+                "description": "Available: Step 5+.\n\nRequests an eventId that was never submitted. Expected: 404 Not Found with error field."
               },
               "response": [],
               "event": [
@@ -427,6 +494,10 @@
                     "exec": [
                       "pm.test('Status is 404 Not Found', function () {",
                       "    pm.response.to.have.status(404);",
+                      "});",
+                      "",
+                      "pm.test('Error field is present', function () {",
+                      "    pm.expect(pm.response.json()).to.have.property('error');",
                       "});"
                     ]
                   }
@@ -473,12 +544,39 @@
                   }
                 }
               ]
+            },
+            {
+              "name": "List Events — Missing account param [Step 5+]",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway_url}}/events",
+                  "host": ["{{gateway_url}}"],
+                  "path": ["events"]
+                },
+                "description": "Available: Step 5+.\n\nThe ?account= query parameter is required. Omitting it triggers\nMissingServletRequestParameterException → GlobalExceptionHandler → 400."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 400 Bad Request (missing required param)', function () {",
+                      "    pm.response.to.have.status(400);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
             }
           ]
         },
         {
-          "name": "GET /health",
-          "description": "Available: Step 11+.",
+          "name": "GET /health [Step 11+]",
+          "description": "Custom health endpoint — probes the H2 database with SELECT 1.\nReturns 200 UP or 503 DOWN. Distinct from /actuator/health (see that folder for circuit breaker state).",
           "item": [
             {
               "name": "Gateway Health Check [Step 11+]",
@@ -509,6 +607,286 @@
                       "",
                       "pm.test('Database status is UP', function () {",
                       "    pm.expect(pm.response.json().database).to.equal('UP');",
+                      "});",
+                      "",
+                      "pm.test('Service name is event-gateway', function () {",
+                      "    pm.expect(pm.response.json().service).to.equal('event-gateway');",
+                      "});",
+                      "",
+                      "pm.test('Timestamp is present (ISO-8601)', function () {",
+                      "    pm.expect(pm.response.json()).to.have.property('timestamp');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "GET /actuator [Step 9/11+]",
+          "description": "Spring Boot Actuator endpoints.\n\nAvailable: /actuator/health from Step 9 (actuator added as tracing prerequisite).\nCircuit breaker state in /actuator/health: Step 10+.\nCustom metrics (/actuator/metrics/events.submitted, account.service.call.duration): Step 11+.",
+          "item": [
+            {
+              "name": "Actuator Health — includes circuit breaker state [Step 10+]",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway_url}}/actuator/health",
+                  "host": ["{{gateway_url}}"],
+                  "path": ["actuator", "health"]
+                },
+                "description": "Available: Step 9+ (dependency present). Circuit breaker state visible: Step 10+.\n\nReturns Spring Boot's composite health including:\n  - db: H2 database connectivity\n  - circuitBreakers.accountService: CLOSED / OPEN / HALF_OPEN (Step 10+)\n\nExpected response shape:\n{\n  \"status\": \"UP\",\n  \"components\": {\n    \"circuitBreakers\": {\n      \"status\": \"UP\",\n      \"details\": {\n        \"accountService\": {\n          \"details\": { \"state\": \"CLOSED\", ... }\n        }\n      }\n    },\n    \"db\": { \"status\": \"UP\" },\n    ...\n  }\n}"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200 OK', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('Overall status is UP', function () {",
+                      "    pm.expect(pm.response.json().status).to.equal('UP');",
+                      "});",
+                      "",
+                      "pm.test('Circuit breaker component is present', function () {",
+                      "    var json = pm.response.json();",
+                      "    pm.expect(json.components).to.have.property('circuitBreakers');",
+                      "});",
+                      "",
+                      "pm.test('accountService circuit state is CLOSED (services running normally)', function () {",
+                      "    var json = pm.response.json();",
+                      "    var cbDetails = json.components.circuitBreakers.details.accountService.details;",
+                      "    pm.expect(cbDetails.state).to.equal('CLOSED');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Actuator Metrics — list all metric names [Step 11+]",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway_url}}/actuator/metrics",
+                  "host": ["{{gateway_url}}"],
+                  "path": ["actuator", "metrics"]
+                },
+                "description": "Available: Step 11+.\n\nLists all available metric names. Look for:\n  - events.submitted          (custom counter — Step 11)\n  - account.service.call.duration  (custom timer — Step 11)\n  - jvm.memory.used, http.server.requests, etc. (built-in Micrometer metrics)"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200 OK', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('events.submitted metric is registered', function () {",
+                      "    var names = pm.response.json().names;",
+                      "    pm.expect(names).to.include('events.submitted');",
+                      "});",
+                      "",
+                      "pm.test('account.service.call.duration metric is registered', function () {",
+                      "    var names = pm.response.json().names;",
+                      "    pm.expect(names).to.include('account.service.call.duration');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Actuator Metrics — events.submitted (all tags) [Step 11+]",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway_url}}/actuator/metrics/events.submitted",
+                  "host": ["{{gateway_url}}"],
+                  "path": ["actuator", "metrics", "events.submitted"]
+                },
+                "description": "Available: Step 11+. Requires at least one POST /events call first.\n\nReturns total event submission count across all type/status tag combinations.\nThe availableTags field shows which tag values have been recorded:\n  tag 'status': PROCESSED, FAILED, DUPLICATE\n  tag 'type':   CREDIT, DEBIT"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200 OK', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('Metric name is events.submitted', function () {",
+                      "    pm.expect(pm.response.json().name).to.equal('events.submitted');",
+                      "});",
+                      "",
+                      "pm.test('COUNT measurement is present', function () {",
+                      "    var measurements = pm.response.json().measurements;",
+                      "    var count = measurements.find(m => m.statistic === 'COUNT');",
+                      "    pm.expect(count).to.exist;",
+                      "    pm.expect(count.value).to.be.above(0);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Actuator Metrics — events.submitted (PROCESSED) [Step 11+]",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway_url}}/actuator/metrics/events.submitted?tag=status:PROCESSED",
+                  "host": ["{{gateway_url}}"],
+                  "path": ["actuator", "metrics", "events.submitted"],
+                  "query": [{ "key": "tag", "value": "status:PROCESSED" }]
+                },
+                "description": "Available: Step 11+. Requires at least one successful POST /events.\n\nFilters the events.submitted counter to show only PROCESSED events.\nValue increments on every event that the Account Service accepted successfully."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200 OK', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('PROCESSED count is greater than 0', function () {",
+                      "    var count = pm.response.json().measurements.find(m => m.statistic === 'COUNT');",
+                      "    pm.expect(count.value).to.be.above(0);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Actuator Metrics — events.submitted (FAILED) [Step 11+]",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway_url}}/actuator/metrics/events.submitted?tag=status:FAILED",
+                  "host": ["{{gateway_url}}"],
+                  "path": ["actuator", "metrics", "events.submitted"],
+                  "query": [{ "key": "tag", "value": "status:FAILED" }]
+                },
+                "description": "Available: Step 11+.\n\nFilters the events.submitted counter to show only FAILED events.\nValue increments when the Account Service is unreachable or returns an error.\nTo trigger: stop the Account Service, then POST an event to the Gateway."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200 OK', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Actuator Metrics — events.submitted (DUPLICATE) [Step 11+]",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway_url}}/actuator/metrics/events.submitted?tag=status:DUPLICATE",
+                  "host": ["{{gateway_url}}"],
+                  "path": ["actuator", "metrics", "events.submitted"],
+                  "query": [{ "key": "tag", "value": "status:DUPLICATE" }]
+                },
+                "description": "Available: Step 11+. Requires the duplicate submission request to have been sent first.\n\nFilters the events.submitted counter to show only DUPLICATE events.\nValue increments when a Gateway-layer duplicate is detected (eventId already exists)."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200 OK', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Actuator Metrics — account.service.call.duration (all) [Step 11+]",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway_url}}/actuator/metrics/account.service.call.duration",
+                  "host": ["{{gateway_url}}"],
+                  "path": ["actuator", "metrics", "account.service.call.duration"]
+                },
+                "description": "Available: Step 11+. Requires at least one POST /events that reached the Account Service.\n\nTimer measuring the duration of every Account Service call from the Gateway.\nMeasurements include: COUNT, TOTAL_TIME, MAX.\navailableTags includes 'outcome': success, failure"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200 OK', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('Timer COUNT is greater than 0', function () {",
+                      "    var count = pm.response.json().measurements.find(m => m.statistic === 'COUNT');",
+                      "    pm.expect(count.value).to.be.above(0);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Actuator Metrics — account.service.call.duration (success) [Step 11+]",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gateway_url}}/actuator/metrics/account.service.call.duration?tag=outcome:success",
+                  "host": ["{{gateway_url}}"],
+                  "path": ["actuator", "metrics", "account.service.call.duration"],
+                  "query": [{ "key": "tag", "value": "outcome:success" }]
+                },
+                "description": "Available: Step 11+.\n\nFilters the call duration timer to successful Account Service calls only.\nThe MAX value is the worst-case latency of a successful call."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200 OK', function () {",
+                      "    pm.response.to.have.status(200);",
                       "});"
                     ]
                   }
@@ -525,7 +903,7 @@
       "item": [
         {
           "name": "POST /accounts/{accountId}/transactions",
-          "description": "Available: Step 6+.\n\nInternal endpoint. In production this is called by the Gateway only.\nThese requests call the Account Service directly to test its logic in isolation.",
+          "description": "Available: Step 6+.\n\nInternal endpoint. In production this is called by the Gateway only.\nThese requests call the Account Service directly to test its logic in isolation.\n\nResponse codes:\n  201 Created — transaction applied OR duplicate detected (balance unchanged for duplicate)\n  400 Bad Request — unknown transaction type\n  404 Not Found — GET endpoints only (account not found)",
           "item": [
             {
               "name": "Apply CREDIT Transaction (evt-001) [Step 6+]",
@@ -559,6 +937,12 @@
                       "    var json = pm.response.json();",
                       "    pm.expect(json.transactionId).to.equal('evt-001');",
                       "    pm.expect(json.newBalance).to.equal(150);",
+                      "});",
+                      "",
+                      "pm.test('Response has accountId and currency', function () {",
+                      "    var json = pm.response.json();",
+                      "    pm.expect(json.accountId).to.equal(pm.collectionVariables.get('test_account_id'));",
+                      "    pm.expect(json.currency).to.equal('USD');",
                       "});"
                     ]
                   }
@@ -602,6 +986,42 @@
               ]
             },
             {
+              "name": "Apply Out-of-Order CREDIT (evt-003) [Step 6+]",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"transactionId\": \"evt-003\",\n    \"type\": \"CREDIT\",\n    \"amount\": 200.00,\n    \"currency\": \"USD\",\n    \"eventTimestamp\": \"2026-05-10T08:00:00Z\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{account_service_url}}/accounts/{{test_account_id}}/transactions",
+                  "host": ["{{account_service_url}}"],
+                  "path": ["accounts", "{{test_account_id}}", "transactions"]
+                },
+                "description": "Available: Step 6+.\n\nApplies a CREDIT with an earlier eventTimestamp than the two existing transactions.\nBalance after all three: CREDIT 150 + CREDIT 200 - DEBIT 50 = 300.00.\nAddition and subtraction are commutative — the result is the same regardless of arrival order.\nExpected: 201 Created, newBalance = 300.00"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 201 Created', function () {",
+                      "    pm.response.to.have.status(201);",
+                      "});",
+                      "",
+                      "pm.test('newBalance is 300 after all three transactions', function () {",
+                      "    pm.expect(pm.response.json().newBalance).to.equal(300);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
               "name": "Duplicate Transaction — Same transactionId (evt-001) [Step 8+]",
               "request": {
                 "method": "POST",
@@ -616,7 +1036,7 @@
                   "host": ["{{account_service_url}}"],
                   "path": ["accounts", "{{test_account_id}}", "transactions"]
                 },
-                "description": "Available: Step 8+.\n\nSame transactionId as the first CREDIT. The Account Service detects the duplicate\n(existsById check) and returns the original result without re-applying the amount.\nExpected: 200 OK, balance unchanged."
+                "description": "Available: Step 8+.\n\nSame transactionId as the first CREDIT. The Account Service detects the duplicate\n(existsById check) and returns the current balance without re-applying the amount.\n\nNote: the Account Service always returns 201 Created for transactions — including duplicates.\nThe duplicate path is distinguished by the balance being unchanged, not by the status code.\n(The Gateway returns 200 OK for duplicates; the Account Service always returns 201.)\n\nExpected: 201 Created, balance unchanged (still 300.00 if evt-003 was also applied)."
               },
               "response": [],
               "event": [
@@ -625,8 +1045,12 @@
                   "script": {
                     "type": "text/javascript",
                     "exec": [
-                      "pm.test('Status is 200 OK (duplicate detected, not re-applied)', function () {",
-                      "    pm.response.to.have.status(200);",
+                      "pm.test('Status is 201 Created (Account Service always returns 201)', function () {",
+                      "    pm.response.to.have.status(201);",
+                      "});",
+                      "",
+                      "pm.test('transactionId is correct', function () {",
+                      "    pm.expect(pm.response.json().transactionId).to.equal('evt-001');",
                       "});"
                     ]
                   }
@@ -662,11 +1086,46 @@
                       "    pm.response.to.have.status(200);",
                       "});",
                       "",
-                      "pm.test('Response has accountId and balance', function () {",
+                      "pm.test('Response has accountId, balance, currency', function () {",
                       "    var json = pm.response.json();",
                       "    pm.expect(json).to.have.property('accountId');",
                       "    pm.expect(json).to.have.property('balance');",
                       "    pm.expect(json).to.have.property('currency');",
+                      "});",
+                      "",
+                      "pm.test('Balance is 300.00 after CREDIT 150 + CREDIT 200 - DEBIT 50', function () {",
+                      "    pm.expect(pm.response.json().balance).to.equal(300);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get Account Balance — Not Found [Step 6+]",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{account_service_url}}/accounts/acct-does-not-exist/balance",
+                  "host": ["{{account_service_url}}"],
+                  "path": ["accounts", "acct-does-not-exist", "balance"]
+                },
+                "description": "Available: Step 6+.\n\nAccount has never had a transaction — does not exist in the database.\nExpected: 404 Not Found with error field."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 404 Not Found', function () {",
+                      "    pm.response.to.have.status(404);",
+                      "});",
+                      "",
+                      "pm.test('Error field is present', function () {",
+                      "    pm.expect(pm.response.json()).to.have.property('error');",
                       "});"
                     ]
                   }
@@ -683,7 +1142,7 @@
                   "host": ["{{account_service_url}}"],
                   "path": ["accounts", "{{test_account_id}}"]
                 },
-                "description": "Available: Step 6+.\n\nReturns full account details including the transaction list.\nTransactions must be sorted by eventTimestamp ASC (not insertion order).\n\nExpected transaction order:\n  [0] evt-003 — 2026-05-10 (CREDIT 200)\n  [1] evt-001 — 2026-05-15 (CREDIT 150)\n  [2] evt-002 — 2026-05-16 (DEBIT  50)"
+                "description": "Available: Step 6+.\n\nReturns full account details including the transaction list.\nTransactions must be sorted by eventTimestamp ASC (not insertion order).\n\nExpected transaction order:\n  [0] evt-003 — 2026-05-10 (CREDIT 200, submitted last but earliest timestamp)\n  [1] evt-001 — 2026-05-15 (CREDIT 150)\n  [2] evt-002 — 2026-05-16 (DEBIT  50)"
               },
               "response": [],
               "event": [
@@ -700,6 +1159,10 @@
                       "    pm.expect(pm.response.json().transactions).to.be.an('array');",
                       "});",
                       "",
+                      "pm.test('Balance is 300.00', function () {",
+                      "    pm.expect(pm.response.json().balance).to.equal(300);",
+                      "});",
+                      "",
                       "pm.test('Transactions sorted by eventTimestamp ASC', function () {",
                       "    var txns = pm.response.json().transactions;",
                       "    if (txns.length >= 3) {",
@@ -712,12 +1175,39 @@
                   }
                 }
               ]
+            },
+            {
+              "name": "Get Account — Not Found [Step 6+]",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{account_service_url}}/accounts/acct-also-not-there",
+                  "host": ["{{account_service_url}}"],
+                  "path": ["accounts", "acct-also-not-there"]
+                },
+                "description": "Available: Step 6+.\n\nExpected: 404 Not Found."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 404 Not Found', function () {",
+                      "    pm.response.to.have.status(404);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
             }
           ]
         },
         {
-          "name": "GET /health",
-          "description": "Available: Step 11+.",
+          "name": "GET /health [Step 11+]",
+          "description": "Custom health endpoint — probes the H2 database with SELECT 1.",
           "item": [
             {
               "name": "Account Service Health Check [Step 11+]",
@@ -748,6 +1238,87 @@
                       "",
                       "pm.test('Database status is UP', function () {",
                       "    pm.expect(pm.response.json().database).to.equal('UP');",
+                      "});",
+                      "",
+                      "pm.test('Service name is account-service', function () {",
+                      "    pm.expect(pm.response.json().service).to.equal('account-service');",
+                      "});",
+                      "",
+                      "pm.test('Timestamp is present', function () {",
+                      "    pm.expect(pm.response.json()).to.have.property('timestamp');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "GET /actuator [Step 9/11+]",
+          "description": "Spring Boot Actuator endpoints for Account Service.\n\nAvailable from Step 9 (actuator added as tracing prerequisite).",
+          "item": [
+            {
+              "name": "Actuator Health [Step 9+]",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{account_service_url}}/actuator/health",
+                  "host": ["{{account_service_url}}"],
+                  "path": ["actuator", "health"]
+                },
+                "description": "Available: Step 9+.\n\nReturns Spring Boot's composite health for the Account Service.\nExpected: status UP, db component UP."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200 OK', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('Overall status is UP', function () {",
+                      "    pm.expect(pm.response.json().status).to.equal('UP');",
+                      "});",
+                      "",
+                      "pm.test('Database component is UP', function () {",
+                      "    pm.expect(pm.response.json().components.db.status).to.equal('UP');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Actuator Metrics — list all metric names [Step 11+]",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{account_service_url}}/actuator/metrics",
+                  "host": ["{{account_service_url}}"],
+                  "path": ["actuator", "metrics"]
+                },
+                "description": "Available: Step 11+.\n\nLists all available metric names for the Account Service.\nExpect standard JVM and HTTP metrics (jvm.memory.used, http.server.requests, etc.)."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status is 200 OK', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('names array is present and non-empty', function () {",
+                      "    var names = pm.response.json().names;",
+                      "    pm.expect(names).to.be.an('array').with.lengthOf.above(0);",
                       "});"
                     ]
                   }

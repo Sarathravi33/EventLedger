@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.eventledger.account.AccountApiIntegrationTest
+-------------------------------------------------------------------------------
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 7.216 s -- in com.eventledger.account.AccountApiIntegrationTest

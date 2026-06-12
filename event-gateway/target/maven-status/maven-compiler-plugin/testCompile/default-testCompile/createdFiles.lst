@@ -1,0 +1,7 @@
+com\eventledger\gateway\service\EventServiceTest.class
+com\eventledger\gateway\EventApiIntegrationTest.class
+com\eventledger\gateway\CircuitBreakerTest.class
+com\eventledger\gateway\IdempotencyIntegrationTest.class
+com\eventledger\gateway\TracePropagationTest.class
+com\eventledger\gateway\client\AccountServiceClientTest.class
+com\eventledger\gateway\OutOfOrderIntegrationTest.class

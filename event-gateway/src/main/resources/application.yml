@@ -61,6 +61,9 @@ management:
     health:
       # Show individual component health (database, circuit breaker) in /actuator/health.
       show-details: always
+  health:
+    circuitbreakers:
+      enabled: true
 
 # Circuit breaker configuration for the Account Service call.
 # resilience4j-spring-boot3 auto-configures a CircuitBreaker instance named
@@ -79,6 +82,10 @@ resilience4j:
         wait-duration-in-open-state: 10s
         # In HALF_OPEN state, allow 3 probe calls before deciding to close or re-open.
         permitted-number-of-calls-in-half-open-state: 3
+        # Minimum calls before failure rate is evaluated (must be <= sliding-window-size
+        # for COUNT_BASED mode; without this, Resilience4j defaults to 100 which would
+        # require 100 calls before the circuit can open).
+        minimum-number-of-calls: 10
         # Expose circuit breaker state via /actuator/health (added in Step 11).
         register-health-indicator: true
 

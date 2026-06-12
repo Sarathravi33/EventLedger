@@ -5,7 +5,7 @@
     Identical structure to the Event Gateway's logback-spring.xml — every log
     line is a JSON object with traceId and spanId from the MDC.
 
-    --- How trace propagation works on the Account Service side ---
+    How trace propagation works on the Account Service side:
     1. The Gateway's RestTemplate (instrumented by Micrometer Tracing via
        RestTemplateBuilder) adds a W3C traceparent header to every call:
          traceparent: 00-{traceId}-{spanId}-01
@@ -15,7 +15,7 @@
     4. Every log statement made while processing that request carries the
        same traceId that the Gateway used — correlating both log streams.
 
-    --- JSON field reference ---
+    JSON field reference:
     @timestamp  ISO-8601 timestamp
     level       DEBUG / INFO / WARN / ERROR
     logger_name short class name

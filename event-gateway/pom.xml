@@ -126,6 +126,27 @@
             <scope>test</scope>
         </dependency>
 
+        <!--
+            WireMock 3.x — embedded HTTP stub server for JUnit 5.
+            Used in CircuitBreakerTest and TracePropagationTest to simulate Account
+            Service responses without starting the real service. WireMockExtension
+            starts on a dynamic port; @DynamicPropertySource wires account-service.base-url
+            to the WireMock URL before the Spring context is created.
+            WireMock 3.x requires Java 17+ and is compatible with Spring Boot 3.x.
+        -->
+        <!--
+            wiremock-standalone bundles Jetty 11 (WireMock's required HTTP server)
+            inside the fat JAR, avoiding classpath conflicts with Spring Boot 3.x
+            which manages Jetty 12. The standalone variant includes all WireMock
+            dependencies and is the recommended artifact for Maven test classpaths.
+        -->
+        <dependency>
+            <groupId>org.wiremock</groupId>
+            <artifactId>wiremock-standalone</artifactId>
+            <version>3.9.1</version>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 
     <build>
